@@ -1,4 +1,4 @@
-# Grid Crop Image
+# Grid Crop Image (파이썬 다중 이미지 크롭/분할 프로그램)
 
 `Grid Crop Image`는 한 장의 큰 이미지 위에서 여러 개의 크롭 영역을 직접 드래그로 지정하고, 잘라낸 결과물을 자동으로 저장할 수 있는 Windows용 데스크톱 도구입니다.
 
