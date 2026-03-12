@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grid Crop Image | Windows 이미지 크롭 및 분할 도구</title>
+  <meta name="description" content="Grid Crop Image는 Windows에서 스크린샷 자르기, 클립보드 이미지 붙여넣기, 다중 사각형 크롭, JSON 설정 저장, 순차 파일 저장을 빠르게 처리하는 이미지 분할 도구입니다.">
+  <meta name="keywords" content="Grid Crop Image, Windows 이미지 크롭, 이미지 분할 프로그램, 스크린샷 자르기, 클립보드 이미지 붙여넣기, multi-region image splitter, clipboard image crop, Tkinter Pillow">
+  <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+  <meta name="googlebot" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <link rel="canonical" href="https://sheryloe.github.io/grid-crop-image/">
+  <link rel="sitemap" type="application/xml" title="Sitemap" href="https://sheryloe.github.io/grid-crop-image/sitemap.xml">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="ko_KR">
+  <meta property="og:site_name" content="Grid Crop Image">
+  <meta property="og:title" content="Grid Crop Image | Windows 이미지 크롭 및 분할 도구">
+  <meta property="og:description" content="스크린샷 자르기, 클립보드 이미지 붙여넣기, 다중 사각형 크롭, JSON 설정 저장, 순차 파일 저장을 빠르게 처리하는 Windows 이미지 분할 앱.">
+  <meta property="og:url" content="https://sheryloe.github.io/grid-crop-image/">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Grid Crop Image | Windows 이미지 크롭 및 분할 도구">
+  <meta name="twitter:description" content="Windows용 스크린샷 자르기 및 이미지 분할 도구. Ctrl+V 클립보드 붙여넣기, JSON 설정 저장, 순차 저장 지원.">
+  <style>
+    :root {
+      --bg: #f4efe7;
+      --bg-deep: #111827;
+      --card: rgba(255, 251, 245, 0.86);
+      --card-strong: rgba(255, 255, 255, 0.95);
+      --line: rgba(15, 23, 42, 0.12);
+      --text: #1f2937;
+      --muted: #5b6473;
+      --accent: #c76b2b;
+      --accent-soft: #f0c099;
+      --accent-deep: #8f3b13;
+      --teal: #145d66;
+      --shadow: 0 22px 60px rgba(17, 24, 39, 0.12);
+      --radius-xl: 28px;
+      --radius-lg: 20px;
+      --radius-md: 14px;
+      --content: 1180px;
+      --heading-font: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+      --body-font: "Aptos", "Segoe UI Variable Text", "Noto Sans KR", "Malgun Gothic", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      font-family: var(--body-font);
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(230, 157, 86, 0.26), transparent 34%),
+        radial-gradient(circle at top right, rgba(20, 93, 102, 0.12), transparent 28%),
+        linear-gradient(180deg, #f8f3ec 0%, #efe5d7 42%, #f6f1ea 100%);
+      line-height: 1.7;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .page-shell {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .page-shell::before,
+    .page-shell::after {
+      content: "";
+      position: fixed;
+      inset: auto;
+      z-index: -1;
+      border-radius: 999px;
+      filter: blur(32px);
+      opacity: 0.7;
+      pointer-events: none;
+    }
+
+    .page-shell::before {
+      width: 280px;
+      height: 280px;
+      top: 80px;
+      left: -40px;
+      background: rgba(199, 107, 43, 0.12);
+    }
+
+    .page-shell::after {
+      width: 320px;
+      height: 320px;
+      right: -80px;
+      bottom: 60px;
+      background: rgba(20, 93, 102, 0.12);
+    }
+
+    .container {
+      width: min(calc(100% - 32px), var(--content));
+      margin: 0 auto;
+    }
+
+    .hero {
+      padding: 34px 0 80px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+
+    .brand {
+      font-size: 0.95rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: var(--accent-deep);
+    }
+
+    .top-links {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .top-links a,
+    .primary-button,
+    .secondary-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 46px;
+      padding: 0 18px;
+      text-decoration: none;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+
+    .top-links a:hover,
+    .primary-button:hover,
+    .secondary-button:hover {
+      transform: translateY(-1px);
+    }
+
+    .top-links a {
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--text);
+    }
+
+    .hero-card {
+      position: relative;
+      padding: 38px;
+      border-radius: var(--radius-xl);
+      background:
+        linear-gradient(140deg, rgba(255, 248, 239, 0.94), rgba(255, 255, 255, 0.82)),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.8));
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      animation: float-in 520ms ease both;
+    }
+
+    .hero-card::before {
+      content: "";
+      position: absolute;
+      inset: -20% auto auto 60%;
+      width: 340px;
+      height: 340px;
+      background: radial-gradient(circle, rgba(199, 107, 43, 0.18), transparent 62%);
+      pointer-events: none;
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: rgba(20, 93, 102, 0.08);
+      color: var(--teal);
+      font-size: 0.9rem;
+      font-weight: 700;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      font-family: var(--heading-font);
+      letter-spacing: -0.03em;
+    }
+
+    h1 {
+      max-width: 12ch;
+      font-size: clamp(2.7rem, 6vw, 5rem);
+      line-height: 0.96;
+      margin-bottom: 18px;
+    }
+
+    .lead {
+      max-width: 760px;
+      font-size: 1.08rem;
+      color: var(--muted);
+      margin: 0 0 26px;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+
+    .primary-button {
+      background: var(--bg-deep);
+      color: #fff;
+      border-color: transparent;
+    }
+
+    .secondary-button {
+      background: rgba(255, 255, 255, 0.82);
+      color: var(--text);
+    }
+
+    .stat-grid,
+    .card-grid,
+    .faq-grid {
+      display: grid;
+      gap: 18px;
+    }
+
+    .stat-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .stat,
+    .feature-card,
+    .info-card,
+    .faq-card {
+      padding: 22px;
+      border-radius: var(--radius-lg);
+      background: var(--card-strong);
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 1.6rem;
+      color: var(--accent-deep);
+      margin-bottom: 6px;
+    }
+
+    .section {
+      padding: 0 0 68px;
+    }
+
+    .section-heading {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+
+    .eyebrow {
+      color: var(--accent-deep);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+
+    h2 {
+      font-size: clamp(1.9rem, 3vw, 3rem);
+      line-height: 1.04;
+    }
+
+    .section-heading p {
+      max-width: 760px;
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .card-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .feature-card h3,
+    .info-card h3,
+    .faq-card h3 {
+      font-size: 1.25rem;
+      margin-bottom: 10px;
+    }
+
+    .feature-card p,
+    .info-card p,
+    .faq-card p,
+    .flow-copy p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 18px;
+    }
+
+    .flow-copy,
+    .flow-steps {
+      padding: 28px;
+      border-radius: var(--radius-xl);
+      background: var(--card);
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      backdrop-filter: blur(10px);
+    }
+
+    .flow-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 12px;
+    }
+
+    .flow-list li {
+      display: grid;
+      grid-template-columns: 52px 1fr;
+      gap: 14px;
+      align-items: start;
+      padding: 16px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .flow-index {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 52px;
+      height: 52px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+      color: #fff;
+      font-weight: 800;
+    }
+
+    .note-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .faq-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    footer {
+      padding: 0 0 42px;
+    }
+
+    .footer-card {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 24px 28px;
+      border-radius: var(--radius-xl);
+      background: var(--bg-deep);
+      color: rgba(255, 255, 255, 0.88);
+    }
+
+    .footer-card a {
+      color: #fff;
+    }
+
+    @keyframes float-in {
+      from {
+        opacity: 0;
+        transform: translateY(18px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 980px) {
+      .stat-grid,
+      .card-grid,
+      .flow,
+      .note-grid,
+      .faq-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-card {
+        padding: 28px;
+      }
+
+      .topbar {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .hero {
+        padding-top: 22px;
+        padding-bottom: 56px;
+      }
+
+      .hero-card,
+      .flow-copy,
+      .flow-steps,
+      .stat,
+      .feature-card,
+      .info-card,
+      .faq-card,
+      .footer-card {
+        padding: 20px;
+      }
+
+      .hero-actions,
+      .top-links {
+        width: 100%;
+      }
+
+      .top-links a,
+      .primary-button,
+      .secondary-button {
+        width: 100%;
+      }
+    }
+  </style>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "name": "Grid Crop Image",
+        "alternateName": "Auto Crop Splitter",
+        "applicationCategory": "UtilityApplication",
+        "operatingSystem": "Windows",
+        "inLanguage": "ko",
+        "url": "https://sheryloe.github.io/grid-crop-image/",
+        "downloadUrl": "https://github.com/sheryloe/grid-crop-image",
+        "codeRepository": "https://github.com/sheryloe/grid-crop-image",
+        "description": "Windows image crop and split tool for screenshot clipping, clipboard image paste, manual multi-region cropping, JSON configuration save and load, and sequential export.",
+        "softwareRequirements": "Python 3.11+, Pillow, Windows 10+",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "author": {
+          "@type": "Person",
+          "name": "sheryloe"
+        }
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Grid Crop Image는 어떤 작업에 적합한가요?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "스크린샷 자르기, 긴 이미지 분할, 다중 영역 크롭, 반복 크롭 레이아웃 저장, 클립보드 이미지 붙여넣기 기반 작업에 적합합니다."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "클립보드 이미지도 바로 붙여넣을 수 있나요?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "가능합니다. Ctrl+V로 클립보드에 있는 이미지 데이터를 바로 불러오거나, 클립보드에 복사된 지원 이미지 파일을 자동으로 감지할 수 있습니다."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "JSON 설정 저장은 왜 필요한가요?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "같은 유형의 이미지를 반복해서 자를 때 크롭 좌표와 작업 상태를 다시 불러와 재사용할 수 있어 반복 작업 효율을 높여줍니다."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="container">
+        <div class="topbar">
+          <div class="brand">Grid Crop Image</div>
+          <nav class="top-links" aria-label="바로가기">
+            <a href="https://github.com/sheryloe/grid-crop-image">GitHub Repository</a>
+            <a href="https://github.com/sheryloe/grid-crop-image#readme">README</a>
+            <a href="#faq">FAQ</a>
+          </nav>
+        </div>
+
+        <section class="hero-card" aria-labelledby="hero-title">
+          <div class="badge-row">
+            <span class="badge">Windows Image Crop Tool</span>
+            <span class="badge">Clipboard Paste</span>
+            <span class="badge">JSON Layout Save</span>
+          </div>
+          <h1 id="hero-title">스크린샷 자르기와 이미지 분할을 더 빠르게.</h1>
+          <p class="lead">
+            Grid Crop Image는 Windows에서 한 장의 이미지를 여러 개의 직사각형 영역으로 나눠 저장할 수 있는 가벼운 데스크톱 앱입니다.
+            로컬 파일 열기, <strong>Ctrl + V 클립보드 이미지 붙여넣기</strong>, 다중 사각형 크롭, <strong>JSON 설정 저장</strong>, 순차 파일 저장까지 한 흐름으로 처리할 수 있습니다.
+          </p>
+          <div class="hero-actions">
+            <a class="primary-button" href="https://github.com/sheryloe/grid-crop-image">저장소 보기</a>
+            <a class="secondary-button" href="https://github.com/sheryloe/grid-crop-image/blob/main/README.md">사용 가이드 읽기</a>
+          </div>
+          <div class="stat-grid">
+            <article class="stat">
+              <strong>Ctrl + V</strong>
+              클립보드 이미지 붙여넣기와 파일 목록 감지를 지원합니다.
+            </article>
+            <article class="stat">
+              <strong>JSON Save</strong>
+              크롭 좌표와 줌 상태를 저장하고 다시 불러올 수 있습니다.
+            </article>
+            <article class="stat">
+              <strong>Sequential Export</strong>
+              지정한 사각형 순서대로 이미지 파일을 자동 저장합니다.
+            </article>
+          </div>
+        </section>
+      </div>
+    </header>
+
+    <main>
+      <section class="section">
+        <div class="container">
+          <div class="section-heading">
+            <span class="eyebrow">Why This Tool</span>
+            <h2>왜 Grid Crop Image가 필요한가</h2>
+            <p>
+              포토샵 같은 무거운 툴 없이 빠르게 스크린샷을 나누고 싶을 때, 긴 이미지를 구간별로 저장해야 할 때,
+              같은 크롭 레이아웃을 반복해서 써야 할 때 이 앱이 가장 효율적입니다.
+            </p>
+          </div>
+          <div class="card-grid">
+            <article class="feature-card">
+              <h3>Windows 이미지 크롭 프로그램</h3>
+              <p>가볍게 실행되는 Tkinter 기반 앱이라 반복 작업에서 실행 부담이 적습니다.</p>
+            </article>
+            <article class="feature-card">
+              <h3>스크린샷 자르기 도구</h3>
+              <p>캡처 후 바로 붙여넣고 여러 조각으로 나눠 저장하는 흐름에 맞춰져 있습니다.</p>
+            </article>
+            <article class="feature-card">
+              <h3>반복 크롭 자동화</h3>
+              <p>JSON 설정 저장과 좌표 보정 덕분에 동일한 분할 작업을 다시 수행하기 쉽습니다.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-heading">
+            <span class="eyebrow">Core Features</span>
+            <h2>핵심 기능</h2>
+            <p>검색 키워드 수준이 아니라 실제 사용 흐름에 맞는 기능만 정리했습니다.</p>
+          </div>
+          <div class="card-grid">
+            <article class="feature-card">
+              <h3>클립보드 이미지 붙여넣기</h3>
+              <p>`Ctrl + V`로 이미지 데이터를 바로 불러오고, 파일 복사 상황에서는 첫 번째 지원 이미지를 자동으로 감지합니다.</p>
+            </article>
+            <article class="feature-card">
+              <h3>다중 사각형 크롭</h3>
+              <p>여러 개의 크롭 사각형을 생성, 이동, 삭제, 초기화할 수 있으며 저장 순서도 일관되게 유지됩니다.</p>
+            </article>
+            <article class="feature-card">
+              <h3>JSON 설정 저장과 불러오기</h3>
+              <p>원본 이미지 경로, 출력 폴더, 줌, 좌표, 설정 상태까지 저장하고, 크기가 달라지면 비율 보정도 수행합니다.</p>
+            </article>
+            <article class="feature-card">
+              <h3>확대, 축소, 맞춤 보기</h3>
+              <p>Ctrl + 마우스휠 확대/축소, Shift + 마우스휠 가로 스크롤로 긴 이미지도 빠르게 조정할 수 있습니다.</p>
+            </article>
+            <article class="feature-card">
+              <h3>순차 파일 저장</h3>
+              <p>확정한 사각형 순서대로 `rect_01`, `rect_02` 형식으로 저장하고, 중복 파일명도 자동 회피합니다.</p>
+            </article>
+            <article class="feature-card">
+              <h3>Windows EXE 빌드</h3>
+              <p>PyInstaller로 `AutoCropSplitter.exe`를 만들 수 있어 Python 환경이 없는 곳에도 배포하기 좋습니다.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-heading">
+            <span class="eyebrow">Workflow</span>
+            <h2>작업 흐름은 단순하게 유지했습니다</h2>
+            <p>이미지를 여는 순간부터 저장까지의 클릭 수와 이동 경로를 짧게 유지하는 데 초점을 맞췄습니다.</p>
+          </div>
+          <div class="flow">
+            <article class="flow-copy">
+              <h3>추천 작업 순서</h3>
+              <p>
+                로컬 파일을 열거나 클립보드 이미지를 붙여넣고, 저장 폴더를 확인한 다음, 사각형을 만든 뒤 `설정`으로 순서를 확정하고 `분할 시작`으로 저장합니다.
+                이 구조 덕분에 저장 조건이 명확하고, 왜 버튼이 비활성화되어 있는지도 이해하기 쉽습니다.
+              </p>
+            </article>
+            <aside class="flow-steps" aria-label="작업 단계">
+              <ol class="flow-list">
+                <li><span class="flow-index">01</span><div>이미지 열기 또는 <strong>Ctrl + V</strong> 붙여넣기</div></li>
+                <li><span class="flow-index">02</span><div>저장 폴더 확인 및 변경</div></li>
+                <li><span class="flow-index">03</span><div>드래그로 크롭 사각형 생성 및 수정</div></li>
+                <li><span class="flow-index">04</span><div><strong>설정</strong> 후 <strong>분할 시작</strong>으로 순차 저장</div></li>
+              </ol>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-heading">
+            <span class="eyebrow">Tech Notes</span>
+            <h2>현재 프로젝트 기준 요약</h2>
+            <p>검색 방문자가 빠르게 이해할 수 있도록 앱 특성과 배포 포인트를 함께 정리했습니다.</p>
+          </div>
+          <div class="note-grid">
+            <article class="info-card">
+              <h3>지원 환경</h3>
+              <p>Windows 10 이상, Python 3.11 이상, Pillow 기반 이미지 처리, Tkinter 기반 GUI 구조입니다.</p>
+            </article>
+            <article class="info-card">
+              <h3>저장소와 실행 이름</h3>
+              <p>저장소 이름은 <strong>grid-crop-image</strong>, 프로그램 실행 창 제목과 EXE 이름은 <strong>Auto Crop Splitter</strong>입니다.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="faq">
+        <div class="container">
+          <div class="section-heading">
+            <span class="eyebrow">FAQ</span>
+            <h2>자주 묻는 질문</h2>
+            <p>Search Console과 GitHub Pages에서 읽기 좋은 Q&A 구조로 같이 배치했습니다.</p>
+          </div>
+          <div class="faq-grid">
+            <article class="faq-card">
+              <h3>Grid Crop Image는 어떤 작업에서 가장 효율적인가요?</h3>
+              <p>스크린샷 자르기, 긴 이미지 분할, 다중 영역 크롭, 반복 레이아웃 저장 작업에 가장 효율적입니다.</p>
+            </article>
+            <article class="faq-card">
+              <h3>클립보드 이미지도 바로 붙여넣을 수 있나요?</h3>
+              <p>가능합니다. `Ctrl + V`로 이미지 데이터를 바로 불러오고, 복사된 파일 목록에서 지원 이미지를 찾는 흐름도 지원합니다.</p>
+            </article>
+            <article class="faq-card">
+              <h3>JSON 설정 저장은 왜 필요한가요?</h3>
+              <p>같은 크롭 좌표를 반복 작업에 재사용할 수 있고, 이미지 크기가 달라져도 비율 보정으로 다시 적용하기 쉬워집니다.</p>
+            </article>
+            <article class="faq-card">
+              <h3>어디서 다운로드하거나 코드 확인을 할 수 있나요?</h3>
+              <p>GitHub 저장소에서 코드와 README를 바로 확인할 수 있으며, EXE 빌드 방법도 저장소 문서에 정리돼 있습니다.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="container">
+        <div class="footer-card">
+          <div>
+            <strong>Grid Crop Image</strong><br>
+            Windows 이미지 크롭 및 분할 도구
+          </div>
+          <div>
+            <a href="https://github.com/sheryloe/grid-crop-image">Repository</a><br>
+            <a href="https://github.com/sheryloe/grid-crop-image/blob/main/README.md">README</a>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>
