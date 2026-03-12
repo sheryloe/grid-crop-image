@@ -4,3 +4,5 @@ build/
 dist/
 *.spec
 *_rect_*.png
+google*.html
+naver*.html

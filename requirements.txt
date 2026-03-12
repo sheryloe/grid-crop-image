@@ -1,1 +1,1 @@
--r requirements/runtime.txt
+Pillow>=11.1.0

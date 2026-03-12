@@ -1,2 +1,0 @@
--r runtime.txt
-PyInstaller>=6.15.0

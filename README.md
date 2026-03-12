@@ -22,7 +22,7 @@
 - [JSON 설정 저장과 불러오기](#json-설정-저장과-불러오기)
 - [단축키](#단축키)
 - [Windows EXE 빌드](#windows-exe-빌드)
-- [GitHub Pages 및 SEO 자동화](#github-pages-및-seo-자동화)
+- [GitHub Pages 및 루트 속성 전략](#github-pages-및-루트-속성-전략)
 - [문제 해결](#문제-해결)
 - [FAQ](#faq)
 - [프로젝트 구조](#프로젝트-구조)
@@ -241,29 +241,37 @@ dist\AutoCropSplitter.exe
 python -m PyInstaller --noconfirm --clean --onefile --windowed --name AutoCropSplitter --collect-all PIL app.py
 ```
 
-## GitHub Pages 및 SEO 자동화
+## GitHub Pages 및 루트 속성 전략
 
-이 저장소는 GitHub Pages와 Search Console 세팅도 명령어 기반으로 다시 만들 수 있도록 정리돼 있습니다.
+현재 검색 노출 기준은 개별 프로젝트 property가 아니라 `https://sheryloe.github.io/` 루트 속성입니다. 즉 Search Console 검증 파일과 루트 sitemap 관리 책임은 `sheryloe/sheryloe.github.io` 저장소에 있고, 이 저장소는 `grid-crop-image` 프로젝트 페이지 자체의 품질과 메타데이터를 담당합니다.
 
-핵심 구조:
+이 저장소가 맡는 항목:
 
-- `config/pages-seo.json`: 사이트 제목, 설명, 키워드, repo 메타데이터, 검증 파일 정보
-- `templates/index.template.html`: Pages 랜딩 페이지 템플릿
+- `config/pages-seo.json`: 사이트 제목, 설명, 키워드, GitHub repo 메타데이터
+- `templates/index.template.html`: 프로젝트 Pages 랜딩 페이지 템플릿
 - `scripts/generate_pages_assets.py`: `index.html`, `robots.txt`, `sitemap.xml`, `site.webmanifest`, `.nojekyll` 생성
 - `scripts/update_github_repo_metadata.ps1`: GitHub repo description, homepage, topics, Pages source 갱신
-- `scripts/request_search_console_verification.ps1`: Search Console HTML 파일 검증 토큰 요청 및 파일 생성
-- `scripts/submit_search_console.ps1`: Search Console 속성 추가 및 sitemap 제출
+
+루트 저장소 `sheryloe.github.io`가 맡는 항목:
+
+- Google Search Console 루트 속성 검증 파일 관리
+- 루트 sitemap 자동 생성
+- GitHub Pages가 켜진 프로젝트 저장소를 도메인 단위 sitemap에 포함
 
 대표 명령:
 
 ```powershell
 python scripts/generate_pages_assets.py
 powershell -ExecutionPolicy Bypass -File scripts\update_github_repo_metadata.ps1
-powershell -ExecutionPolicy Bypass -File scripts\request_search_console_verification.ps1
-powershell -ExecutionPolicy Bypass -File scripts\submit_search_console.ps1
 ```
 
-자세한 설정 흐름은 `GITHUB_PAGES_SEARCH_CONSOLE_SETUP.md`에 정리돼 있습니다.
+운영 기준:
+
+- 이 저장소에는 Search Console 검증용 `google-site-verification` 파일을 두지 않습니다.
+- 프로젝트 페이지는 자체 `robots.txt`, `sitemap.xml`, canonical, Open Graph 메타데이터를 유지합니다.
+- 루트 sitemap에는 `sheryloe.github.io` 저장소의 자동 생성 스크립트가 `grid-crop-image` URL을 포함합니다.
+
+자세한 운영 전략은 `GITHUB_PAGES_ROOT_PROPERTY_STRATEGY.md`에 정리돼 있습니다.
 
 ## 문제 해결
 
@@ -324,15 +332,14 @@ Tkinter 기반 GUI와 Pillow 이미지 처리 라이브러리를 사용했습니
 ## 프로젝트 구조
 
 - `app.py`: 메인 Tkinter GUI 애플리케이션
-- `requirements/`: 실행 및 빌드 의존성 실제 정의 파일
-- `requirements.txt`: 실행 의존성 설치용 호환 엔트리 파일
-- `requirements-build.txt`: 빌드 의존성 설치용 호환 엔트리 파일
+- `requirements.txt`: 앱 실행용 의존성 파일
+- `requirements-build.txt`: EXE 빌드용 의존성 파일
 - `build_exe.bat`: PyInstaller 기반 EXE 빌드 스크립트
-- `AutoCropSplitter.spec`: PyInstaller 스펙 파일
 - `config/pages-seo.json`: GitHub Pages 및 SEO 설정값
 - `templates/index.template.html`: GitHub Pages 랜딩 페이지 템플릿
-- `scripts/`: Pages 생성, GitHub 메타데이터, Search Console 자동화 스크립트
-- `index.html`, `robots.txt`, `sitemap.xml`, `site.webmanifest`: GitHub Pages 공개 파일
+- `scripts/`: Pages 생성 및 GitHub 메타데이터 자동화 스크립트
+- `index.html`, `robots.txt`, `sitemap.xml`, `site.webmanifest`, `.nojekyll`: GitHub Pages 공개 파일
+- `GITHUB_PAGES_ROOT_PROPERTY_STRATEGY.md`: `sheryloe.github.io` 루트 속성 기준 운영 문서
 - `test.png`: 저장소에 포함된 샘플 이미지
 - `notion/cropimage/`: 티스토리/노션용 글 초안
 
