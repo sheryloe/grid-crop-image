@@ -1,2 +1,1 @@
--r requirements.txt
-PyInstaller>=6.15.0
+-r requirements/build.txt

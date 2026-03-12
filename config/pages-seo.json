@@ -1,0 +1,39 @@
+{
+  "owner": "sheryloe",
+  "repo": "grid-crop-image",
+  "program_name": "Grid Crop Image",
+  "alternate_name": "Auto Crop Splitter",
+  "site_title": "Grid Crop Image | Windows 이미지 크롭 및 분할 도구",
+  "description_ko": "Grid Crop Image는 Windows에서 스크린샷 자르기, 클립보드 이미지 붙여넣기, 다중 사각형 크롭, JSON 설정 저장, 순차 파일 저장을 빠르게 처리하는 이미지 분할 도구입니다.",
+  "description_en": "Grid Crop Image is a Windows image crop and split tool for screenshot clipping, clipboard image paste, manual multi-region cropping, JSON configuration save and load, and sequential export.",
+  "twitter_description": "Windows용 스크린샷 자르기 및 이미지 분할 도구. Ctrl+V 클립보드 붙여넣기, JSON 설정 저장, 순차 저장 지원.",
+  "repo_description": "Windows image crop and split tool for screenshots, clipboard paste, JSON crop layouts, and sequential export.",
+  "homepage": "https://sheryloe.github.io/grid-crop-image/",
+  "repo_url": "https://github.com/sheryloe/grid-crop-image",
+  "readme_url": "https://github.com/sheryloe/grid-crop-image/blob/main/README.md",
+  "site_url": "https://sheryloe.github.io/grid-crop-image/",
+  "keywords": [
+    "Grid Crop Image",
+    "Windows 이미지 크롭",
+    "이미지 분할 프로그램",
+    "스크린샷 자르기",
+    "클립보드 이미지 붙여넣기",
+    "multi-region image splitter",
+    "clipboard image crop",
+    "Tkinter Pillow"
+  ],
+  "repo_topics": [
+    "desktop-app",
+    "image-cropping",
+    "image-processing",
+    "pillow",
+    "pyinstaller",
+    "python",
+    "search-console",
+    "seo",
+    "tkinter",
+    "windows"
+  ],
+  "verification_file": "googleb146312c1195390f.html",
+  "verification_content": "google-site-verification: googleb146312c1195390f.html"
+}
