@@ -1,76 +1,316 @@
 <!doctype html>
 <html lang="ko">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>grid-crop-image | Windows 이미지 크롭 및 분할 작업을 빠르게 처리하는 도구</title>
-  <meta name="description" content="Tkinter와 Pillow로 만든 Windows 이미지 크롭 도구로, 스크린샷 붙여넣기, 다중 영역 선택, JSON 레이아웃 재사용을 지원합니다.">
-  <meta name="keywords" content="windows image crop tool, grid crop image, screenshot split tool, 이미지 분할 프로그램, 윈도우 크롭 도구">
-  <meta name="robots" content="index,follow,max-image-preview:large">
-  <link rel="canonical" href="https://sheryloe.github.io/grid-crop-image/">
-  <meta property="og:type" content="website">
-  <meta property="og:title" content="grid-crop-image">
-  <meta property="og:description" content="Tkinter와 Pillow로 만든 Windows 이미지 크롭 도구로, 스크린샷 붙여넣기, 다중 영역 선택, JSON 레이아웃 재사용을 지원합니다.">
-  <meta property="og:url" content="https://sheryloe.github.io/grid-crop-image/">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="grid-crop-image">
-  <meta name="twitter:description" content="Tkinter와 Pillow로 만든 Windows 이미지 크롭 도구로, 스크린샷 붙여넣기, 다중 영역 선택, JSON 레이아웃 재사용을 지원합니다.">
-  <meta name="theme-color" content="#2563eb">
-  <link rel="stylesheet" href="./styles.css">
-  <script type="application/ld+json">{"@context": "https://schema.org", "@graph": [{"@type": "SoftwareSourceCode", "name": "grid-crop-image", "codeRepository": "https://github.com/sheryloe/grid-crop-image", "description": "Tkinter와 Pillow로 만든 Windows 이미지 크롭 도구로, 스크린샷 붙여넣기, 다중 영역 선택, JSON 레이아웃 재사용을 지원합니다.", "programmingLanguage": "Python 3.11+", "url": "https://sheryloe.github.io/grid-crop-image/", "keywords": "windows image crop tool, grid crop image, screenshot split tool, 이미지 분할 프로그램, 윈도우 크롭 도구"}, {"@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Grid Crop Image는 무엇에 적합한가요?", "acceptedAnswer": {"@type": "Answer", "text": "스크린샷 클립, 블로그용 이미지 분할, 반복 레이아웃 내보내기에 특히 적합합니다."}}, {"@type": "Question", "name": "Windows EXE로 빌드할 수 있나요?", "acceptedAnswer": {"@type": "Answer", "text": "가능합니다. PyInstaller 기반 `build_exe.bat`가 포함돼 있습니다."}}, {"@type": "Question", "name": "왜 JSON 레이아웃이 중요한가요?", "acceptedAnswer": {"@type": "Answer", "text": "같은 위치를 반복 크롭하는 작업에서 시간을 크게 줄여주기 때문입니다."}}]}]}</script>
-</head>
-<body>
-  <main class="shell">
-    <section class="hero">
-      <span class="eyebrow">Project Landing Page</span>
-      <div>
-        <h1>grid-crop-image</h1>
-        <p class="lead">Tkinter와 Pillow로 만든 Windows 이미지 크롭 도구로, 스크린샷 붙여넣기, 다중 영역 선택, JSON 레이아웃 재사용을 지원합니다.</p>
-      </div>
-      <div class="cta-row">
-        <a class="primary" href="https://github.com/sheryloe/grid-crop-image">GitHub Repository</a>
-        <a href="https://sheryloe.github.io/">Project Hub</a>
-      </div>
-      <div class="meta-row">
-        <span class="meta-chip">Windows 이미지 크롭 및 분할 작업을 빠르게 처리하는 도구</span>
-        <span class="meta-chip">스크린샷 작업이 많은 개발자, 블로거, 문서 작성자, QA 담당자</span>
-      </div>
-      <div class="chip-row"><span class="chip">windows image crop tool</span><span class="chip">grid crop image</span><span class="chip">screenshot split tool</span><span class="chip">이미지 분할 프로그램</span><span class="chip">윈도우 크롭 도구</span></div>
-    </section>
-    <section class="section">
-      <h2>Why This Project Exists</h2>
-      <p>스크린샷이나 UI 캡처를 여러 조각으로 반복 분할할 때, 범용 편집기는 속도가 느리고 동일한 레이아웃 재사용이 어렵습니다.</p>
-      <div class="cards"><article class="card"><h3>Feature</h3><p>로컬 이미지 열기와 `Ctrl + V` 클립보드 붙여넣기</p></article><article class="card"><h3>Feature</h3><p>다중 크롭 영역 지정과 순차 내보내기</p></article><article class="card"><h3>Feature</h3><p>JSON 설정 저장/불러오기로 반복 레이아웃 재사용</p></article><article class="card"><h3>Feature</h3><p>PyInstaller 기반 Windows 단일 EXE 빌드 지원</p></article></div>
-    </section>
-    <section class="section split">
-      <div class="stack">
-        <div>
-          <h2>Workflow</h2>
-          <ul class="clean"><li>이미지 열기 또는 클립보드 붙여넣기</li><li>여러 크롭 영역 지정</li><li>순차 저장 또는 레이아웃 JSON 재사용</li></ul>
-        </div>
-        <div>
-          <h2>Tech Stack</h2>
-          <ul class="clean"><li>Python 3.11+</li><li>Tkinter</li><li>Pillow</li><li>PyInstaller</li></ul>
-        </div>
-      </div>
-      <div class="flow">
-        <div>
-          <h2>Quick Start</h2>
-          <pre>`py -m pip install -r requirements.txt`로 의존성을 설치합니다.
-`py app.py`로 프로그램을 실행합니다.
-배포용 EXE는 `build_exe.bat`로 생성합니다.</pre>
-        </div>
-      </div>
-    </section>
-    <section class="section">
-      <h2>Repository Structure</h2>
-      <ul class="clean"><li>`app.py`: 메인 GUI 엔트리</li><li>`config/`, `templates/`: 설정 및 보조 자산</li><li>`scripts/`, `notion/`: 운영 문서와 스크립트</li></ul>
-    </section>
-    <section class="section">
-      <h2>FAQ</h2>
-      <div class="cards"><article class="faq-item"><h3>Grid Crop Image는 무엇에 적합한가요?</h3><p>스크린샷 클립, 블로그용 이미지 분할, 반복 레이아웃 내보내기에 특히 적합합니다.</p></article><article class="faq-item"><h3>Windows EXE로 빌드할 수 있나요?</h3><p>가능합니다. PyInstaller 기반 `build_exe.bat`가 포함돼 있습니다.</p></article><article class="faq-item"><h3>왜 JSON 레이아웃이 중요한가요?</h3><p>같은 위치를 반복 크롭하는 작업에서 시간을 크게 줄여주기 때문입니다.</p></article></div>
-    </section>
-    <p class="footer">Last updated: 2026-03-12 · Owner: sheryloe</p>
-  </main>
-</body>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Grid Crop Image | 반복 캡처를 위한 Windows 이미지 크롭 워크스페이스</title>
+    <meta
+      name="description"
+      content="스크린샷 붙여넣기, 다중 영역 지정, JSON 레이아웃 재사용을 지원하는 Tkinter 기반 Windows 이미지 크롭 도구입니다."
+    >
+    <meta
+      name="keywords"
+      content="screenshot crop tool, windows image crop, batch crop layout, tkinter crop utility, 이미지 분할 도구, 반복 크롭"
+    >
+    <meta name="robots" content="index, follow, max-image-preview:large">
+    <meta name="googlebot" content="index, follow, max-image-preview:large">
+    <meta name="theme-color" content="#205f4f">
+    <meta property="og:type" content="website">
+    <meta property="og:locale" content="ko_KR">
+    <meta property="og:site_name" content="Grid Crop Image">
+    <meta property="og:title" content="Grid Crop Image | 반복 캡처를 위한 Windows 이미지 크롭 워크스페이스">
+    <meta
+      property="og:description"
+      content="Ctrl+V 붙여넣기, 다중 사각형 지정, JSON 설정 저장으로 반복 캡처 작업을 빠르게 처리하는 Windows 크롭 도구입니다."
+    >
+    <meta
+      property="og:image"
+      content="https://sheryloe.github.io/grid-crop-image/assets/screenshots/grid-crop-workspace.png"
+    >
+    <meta property="og:image:alt" content="Grid Crop Image 작업 화면">
+    <meta property="og:url" content="https://sheryloe.github.io/grid-crop-image/">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Grid Crop Image">
+    <meta
+      name="twitter:description"
+      content="반복 스크린샷 작업을 위해 다중 영역 크롭과 레이아웃 재사용을 지원하는 Windows 이미지 도구"
+    >
+    <meta
+      name="twitter:image"
+      content="https://sheryloe.github.io/grid-crop-image/assets/screenshots/grid-crop-workspace.png"
+    >
+    <link rel="canonical" href="https://sheryloe.github.io/grid-crop-image/">
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <link rel="manifest" href="site.webmanifest">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&family=Sora:wght@500;600;700;800&display=swap"
+      rel="stylesheet"
+    >
+    <link rel="stylesheet" href="styles.css">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "SoftwareApplication",
+            "name": "Grid Crop Image",
+            "applicationCategory": "UtilityApplication",
+            "operatingSystem": "Windows 10, Windows 11",
+            "softwareVersion": "Desktop MVP",
+            "description": "스크린샷 붙여넣기, 다중 영역 지정, JSON 레이아웃 저장과 재사용을 지원하는 Windows 이미지 크롭 도구입니다.",
+            "url": "https://sheryloe.github.io/grid-crop-image/",
+            "codeRepository": "https://github.com/sheryloe/grid-crop-image",
+            "screenshot": [
+              "https://sheryloe.github.io/grid-crop-image/assets/screenshots/grid-crop-workspace.png",
+              "https://sheryloe.github.io/grid-crop-image/assets/screenshots/grid-crop-selection-detail.png"
+            ],
+            "featureList": [
+              "Ctrl+V 클립보드 이미지 붙여넣기",
+              "다중 사각형 크롭 지정",
+              "JSON 설정 저장 및 재사용",
+              "PyInstaller 기반 EXE 배포 가능"
+            ],
+            "author": {
+              "@type": "Person",
+              "name": "sheryloe"
+            }
+          },
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Grid Crop Image는 어떤 작업에 잘 맞나요?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "블로그용 스크린샷 분할, UI 캡처 조각내기, SNS 카드 이미지를 반복 크롭하는 작업에 특히 잘 맞습니다."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "여러 영역을 한 번에 저장할 수 있나요?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "가능합니다. 여러 개의 사각형을 지정한 뒤 분할 시작 버튼으로 순차 저장할 수 있습니다."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "같은 레이아웃을 반복 작업에 재사용할 수 있나요?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "네. JSON 설정 저장과 불러오기를 통해 같은 좌표 레이아웃을 다시 적용할 수 있습니다."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <a class="brand" href="#top" aria-label="Grid Crop Image 첫 화면으로 이동">
+          <span class="brand-mark">GC</span>
+          <span class="brand-text">
+            <strong>Grid Crop Image</strong>
+            <span>Screenshot crop workspace</span>
+          </span>
+        </a>
+        <nav class="topnav" aria-label="페이지 이동">
+          <a href="#features">핵심 기능</a>
+          <a href="#workflow">흐름</a>
+          <a href="#screenshots">스크린샷</a>
+          <a href="#faq">FAQ</a>
+          <a href="https://github.com/sheryloe/grid-crop-image">GitHub</a>
+        </nav>
+      </header>
+
+      <main id="top">
+        <section class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Screenshot crop workspace</p>
+            <h1>반복 캡처를 위해<br>사각형을 미리 잡아 두는<br>Windows 크롭 워크스페이스</h1>
+            <p class="hero-body">
+              Grid Crop Image는 한 장의 이미지를 여러 영역으로 나누어 저장해야 하는 작업을 위해 만든
+              Tkinter 기반 도구입니다. 스크린샷을 붙여넣고, 여러 크롭 영역을 지정하고, 같은 레이아웃을
+              JSON으로 다시 불러와 반복 작업 시간을 줄일 수 있습니다.
+            </p>
+            <div class="hero-actions">
+              <a class="button primary" href="https://github.com/sheryloe/grid-crop-image">GitHub 저장소 보기</a>
+              <a class="button secondary" href="https://sheryloe.github.io/">프로젝트 허브로 이동</a>
+            </div>
+            <ul class="hero-meta">
+              <li>Ctrl+V 이미지 붙여넣기</li>
+              <li>다중 사각형 크롭</li>
+              <li>JSON 레이아웃 재사용</li>
+            </ul>
+          </div>
+
+          <div class="hero-visual" aria-label="Grid Crop Image 작업 화면">
+            <figure class="visual-card visual-main">
+              <img
+                src="assets/screenshots/grid-crop-workspace.png"
+                alt="Grid Crop Image 전체 작업 화면"
+                loading="eager"
+              >
+            </figure>
+            <figure class="visual-card visual-detail">
+              <img
+                src="assets/screenshots/grid-crop-selection-detail.png"
+                alt="Grid Crop Image 선택 영역 상세 화면"
+                loading="lazy"
+              >
+            </figure>
+            <div class="visual-caption">
+              <strong>레이아웃을 한 번 잡아 두면 다음 작업이 빨라집니다</strong>
+              <p>이미지 위에 필요한 영역을 미리 나눠 두고, 저장 위치와 설정 파일까지 이어서 관리할 수 있습니다.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="feature-strip" id="features">
+          <article>
+            <span>01</span>
+            <h2>이미지 열기와 클립보드 붙여넣기</h2>
+            <p>파일을 직접 열거나 `Ctrl+V`로 캡처 이미지를 붙여 넣어 작업 시작 시간을 줄입니다.</p>
+          </article>
+          <article>
+            <span>02</span>
+            <h2>여러 영역을 한 번에 정의</h2>
+            <p>사각형을 여러 개 만들고 이동하면서 한 장의 원본 이미지에서 필요한 조각을 순차 저장할 수 있습니다.</p>
+          </article>
+          <article>
+            <span>03</span>
+            <h2>반복 레이아웃은 JSON으로 저장</h2>
+            <p>자주 쓰는 위치 조합을 JSON 파일로 남겨 두면 블로그 카드나 문서 캡처 같은 반복 작업이 빨라집니다.</p>
+          </article>
+        </section>
+
+        <section class="workflow" id="workflow">
+          <div class="section-heading">
+            <p class="eyebrow">Workflow</p>
+            <h2>편집기가 아니라, 반복 크롭 작업에 맞춘 짧은 동선</h2>
+            <p class="section-body">
+              이 앱은 레이어나 템플릿 편집보다 이미지를 빠르게 자르는 반복 작업을 위한 구조입니다.
+              이미지를 불러오고, 사각형을 지정하고, 그대로 분할 저장하는 데 필요한 버튼만 전면에 배치했습니다.
+            </p>
+          </div>
+          <div class="workflow-grid">
+            <article class="workflow-card">
+              <strong>1. 원본 이미지 불러오기</strong>
+              <p>파일 선택 또는 클립보드 붙여넣기로 작업 이미지를 바로 올립니다.</p>
+            </article>
+            <article class="workflow-card">
+              <strong>2. 크롭 사각형 배치</strong>
+              <p>이미지 위에서 여러 영역을 지정하고, 번호와 외곽선으로 현재 선택 상태를 확인합니다.</p>
+            </article>
+            <article class="workflow-card">
+              <strong>3. 설정 저장과 분할 내보내기</strong>
+              <p>출력 폴더를 고른 뒤 조각을 저장하고, 같은 좌표 구성을 JSON으로 다시 쓸 수 있습니다.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="screenshots" id="screenshots">
+          <div class="section-heading">
+            <p class="eyebrow">Runtime capture</p>
+            <h2>실제 작업 화면에서 툴바와 선택 영역이 어떻게 보이는지 확인할 수 있습니다</h2>
+            <p class="section-body">
+              아래 이미지는 로컬 실행 환경에서 직접 캡처한 화면입니다. 첫 이미지는 전체 워크스페이스, 두 번째는
+              사각형 선택이 어떤 방식으로 겹쳐 보이는지 확대해 보여 주는 상세 장면입니다.
+            </p>
+          </div>
+          <div class="flow-banner" aria-label="작업 흐름 안내">
+            <article class="flow-step">
+              <span>STEP 1</span>
+              <strong>전체 레이아웃을 한눈에 정리</strong>
+              <p>툴바, 저장 위치, 배율, 분할 버튼이 모두 상단에 있어서 작업 중 위치 이동이 적습니다.</p>
+            </article>
+            <article class="flow-step">
+              <span>STEP 2</span>
+              <strong>세부 영역을 빠르게 미세 조정</strong>
+              <p>선택된 사각형은 강조되고, 번호가 붙어서 여러 영역을 다룰 때도 맥락을 잃지 않습니다.</p>
+            </article>
+          </div>
+          <div class="screen-grid">
+            <figure class="screen-card wide">
+              <img src="assets/screenshots/grid-crop-workspace.png" alt="Grid Crop Image 전체 작업 화면" loading="lazy">
+              <figcaption>
+                <strong>1. 반복 크롭에 맞춘 전체 워크스페이스</strong>
+                <span>툴바와 배율 제어, 저장 폴더, 캔버스가 한 화면에 배치되어 이미지 분할 작업 흐름을 길게 끊지 않습니다.</span>
+                <ul class="screen-points">
+                  <li>이미지 열기, 붙여넣기, 설정 저장, 설정 불러오기를 같은 행에서 바로 실행할 수 있습니다.</li>
+                  <li>배율 조절과 맞춤 보기 버튼이 상단에 있어 전체 레이아웃과 세부 좌표를 빠르게 오갑니다.</li>
+                  <li>사각형을 여러 개 유지한 채 한 장의 이미지에서 여러 버전을 동시에 뽑아낼 수 있습니다.</li>
+                </ul>
+              </figcaption>
+            </figure>
+            <figure class="screen-card detail">
+              <img src="assets/screenshots/grid-crop-selection-detail.png" alt="Grid Crop Image 선택 영역 확대 화면" loading="lazy">
+              <figcaption>
+                <strong>2. 선택 영역 겹침과 번호 표시</strong>
+                <span>번호와 외곽선 덕분에 어떤 영역이 현재 편집 대상인지 빠르게 파악할 수 있습니다.</span>
+                <ul class="screen-points">
+                  <li>작업 중인 조각과 다음 조각의 순서를 시각적으로 구분하기 쉽습니다.</li>
+                  <li>블로그 카드나 문서 캡처처럼 반복 좌표를 잡아야 할 때 유용합니다.</li>
+                  <li>JSON 설정 저장을 함께 쓰면 다음 배치 작업에서 같은 영역 구성을 다시 호출할 수 있습니다.</li>
+                </ul>
+              </figcaption>
+            </figure>
+          </div>
+        </section>
+
+        <section class="seo-copy">
+          <div class="section-heading">
+            <p class="eyebrow">Search intent</p>
+            <h2>반복 이미지 작업을 찾는 사용자에게 맞춘 문장 구조</h2>
+          </div>
+          <div class="seo-grid">
+            <article>
+              <h3>한국어 검색 의도</h3>
+              <p>이미지 분할 도구, 스크린샷 크롭 프로그램, 반복 캡처 자르기, 블로그 카드 이미지 분할 같은 검색 흐름을 반영했습니다.</p>
+            </article>
+            <article>
+              <h3>영문 검색 의도</h3>
+              <p>screenshot crop tool, windows image crop, batch crop layout, tkinter crop utility 같은 표현을 함께 포함했습니다.</p>
+            </article>
+            <article>
+              <h3>공유 미리보기 대응</h3>
+              <p>대표 작업 화면을 Open Graph 이미지로 지정해 저장소 링크를 공유했을 때 도구의 실제 사용 장면이 먼저 보이게 했습니다.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="faq" id="faq">
+          <div class="section-heading">
+            <p class="eyebrow">FAQ</p>
+            <h2>자주 묻는 질문</h2>
+          </div>
+          <div class="faq-list">
+            <details open>
+              <summary>Grid Crop Image는 어떤 작업에 잘 맞나요?</summary>
+              <p>블로그용 스크린샷 분할, UI 캡처 조각내기, SNS 카드 이미지를 반복 크롭하는 작업에 특히 잘 맞습니다.</p>
+            </details>
+            <details>
+              <summary>여러 영역을 한 번에 저장할 수 있나요?</summary>
+              <p>가능합니다. 여러 개의 사각형을 지정한 뒤 분할 시작 버튼으로 순차 저장할 수 있습니다.</p>
+            </details>
+            <details>
+              <summary>같은 좌표 구성을 다시 불러올 수 있나요?</summary>
+              <p>네. JSON 설정 저장과 불러오기를 통해 같은 레이아웃을 반복 작업에 재사용할 수 있습니다.</p>
+            </details>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <p>Grid Crop Image · Screenshot crop workspace for Windows</p>
+        <a href="https://github.com/sheryloe/grid-crop-image">저장소 바로가기</a>
+      </footer>
+    </div>
+  </body>
 </html>
