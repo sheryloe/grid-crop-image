@@ -20,3 +20,7 @@
 
 - 이미지 처리 실패 사례와 복구 방법을 문서화합니다.
 - 설정 파일 포맷과 마이그레이션 정책을 정리합니다.
+## Blog Automation Note
+
+- Add preset workflows for splitting 2x2 or 3x3 image-prompt results into separate blog assets.
+- Position this as a cost-saving image API workflow for blog automation and traffic-oriented content production.

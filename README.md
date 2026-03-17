@@ -50,3 +50,19 @@ build_exe.bat
 - 다중 파일 배치 처리
 - Undo/Redo와 세션 자동 저장
 - OCR 보조 기능 검토
+## Clone And Run
+
+- No `.env` file is required for the current desktop utility build.
+- Build and run the app with the local toolchain documented in this repository.
+
+## Current TODO
+
+- Batch processing.
+- Undo and redo.
+- OCR-assisted review output.
+
+## Blog Image Prompt Workflow
+
+- Generate one multi-panel image from an image API prompt, then split it into several blog assets with `grid-crop-image`.
+- This is useful for traffic-focused blog production because one paid image response can be reused as multiple thumbnail or inline images.
+- In practice, a 2x2 or 3x3 prompt result can be cut into separate post images to reduce image API cost.
