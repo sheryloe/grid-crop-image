@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import tkinter as tk
 from dataclasses import dataclass
 from datetime import datetime
@@ -35,6 +36,7 @@ CONFIG_FILE_TYPES = [
 ]
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 MIN_RECT_SIZE = 4
+HANDLE_SIZE = 8  # In canvas pixels
 MIN_ZOOM = 0.1
 MAX_ZOOM = 8.0
 ZOOM_STEP = 1.25
@@ -83,6 +85,17 @@ class CropRectangle:
 
 
 class AutoCropApp:
+    HANDLE_CURSORS = {
+        "top-left": "size_nw_se",
+        "top-right": "size_ne_sw",
+        "bottom-left": "size_ne_sw",
+        "bottom-right": "size_nw_se",
+        "top": "sb_v_double_arrow",
+        "bottom": "sb_v_double_arrow",
+        "left": "sb_h_double_arrow",
+        "right": "sb_h_double_arrow",
+    }
+
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title(APP_TITLE)
@@ -108,8 +121,8 @@ class AutoCropApp:
         )
         self.instruction_var = tk.StringVar(
             value=(
-                "드래그로 새 사각형을 만들고, 기존 사각형을 드래그하면 이동합니다. "
-                "Ctrl+V로 클립보드 이미지를 붙여넣고, Ctrl+마우스휠 또는 확대/축소 버튼으로 배율을 조정할 수 있습니다."
+                "드래그로 새 사각형을 만들고(Shift: 정사각형), '그리드 생성'으로 자동 분할하세요. 기존 사각형을 드래그하면 이동합니다. 핸들을 드래그하여 크기를 조절할 수 있습니다(Shift: 비율 유지). "
+                "Ctrl+V로 클립보드 이미지를 붙여넣거나, Ctrl+마우스휠로 배율을 조정할 수 있습니다."
             )
         )
 
@@ -137,6 +150,9 @@ class AutoCropApp:
         self.load_config_button = ttk.Button(toolbar, text="설정 불러오기", command=self.load_configuration)
         self.load_config_button.pack(side="left", padx=(8, 0))
 
+        self.batch_button = ttk.Button(toolbar, text="배치 처리", command=self.open_batch_process_dialog)
+        self.batch_button.pack(side="left", padx=(16, 0))
+
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=12)
 
         self.zoom_out_button = ttk.Button(toolbar, text="축소", command=lambda: self.zoom_by(1 / ZOOM_STEP))
@@ -161,8 +177,11 @@ class AutoCropApp:
         self.clear_button = ttk.Button(toolbar, text="전체 초기화", command=self.clear_rectangles)
         self.clear_button.pack(side="left", padx=(8, 0))
 
+        self.grid_button = ttk.Button(toolbar, text="그리드 생성", command=self.open_grid_generator_dialog)
+        self.grid_button.pack(side="left", padx=(8, 0))
+
         self.configure_button = ttk.Button(toolbar, text="설정", command=self.apply_settings)
-        self.configure_button.pack(side="left", padx=(16, 0))
+        self.configure_button.pack(side="left", padx=(8, 0))
 
         self.split_button = ttk.Button(toolbar, text="분할 시작", command=self.split_image)
         self.split_button.pack(side="left", padx=(8, 0))
@@ -173,6 +192,9 @@ class AutoCropApp:
         ttk.Label(output_frame, text="저장 폴더").pack(side="left")
         self.output_dir_button = ttk.Button(output_frame, text="폴더 선택", command=self.choose_output_directory)
         self.output_dir_button.pack(side="left", padx=(8, 0))
+
+        self.set_cwd_button = ttk.Button(output_frame, text="현재 폴더로 지정", command=self.set_output_to_cwd)
+        self.set_cwd_button.pack(side="left", padx=(8, 0))
         ttk.Label(output_frame, textvariable=self.output_dir_var).pack(side="left", padx=(12, 0))
 
         instruction_label = ttk.Label(wrapper, textvariable=self.instruction_var, wraplength=1320)
@@ -204,6 +226,7 @@ class AutoCropApp:
         status_bar.pack(fill="x", pady=(10, 0))
 
     def _bind_events(self) -> None:
+        self.canvas.bind("<Motion>", self.on_motion)
         self.canvas.bind("<ButtonPress-1>", self.on_left_press)
         self.canvas.bind("<B1-Motion>", self.on_left_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_left_release)
@@ -235,17 +258,23 @@ class AutoCropApp:
         selected_state = "normal" if self.selected_rectangle_index is not None else "disabled"
         split_state = "normal" if has_image and self.is_configured and has_rectangles and has_output_dir else "disabled"
 
+        if not has_image:
+            self.canvas.config(cursor="")
+
         self.paste_button.configure(state="normal")
         self.save_config_button.configure(state=image_state)
         self.load_config_button.configure(state="normal")
+        self.batch_button.configure(state="normal")
         self.zoom_out_button.configure(state=image_state)
         self.zoom_in_button.configure(state=image_state)
         self.zoom_reset_button.configure(state=image_state)
         self.zoom_fit_button.configure(state=image_state)
         self.delete_button.configure(state=selected_state)
         self.clear_button.configure(state=image_state)
+        self.grid_button.configure(state=image_state)
         self.configure_button.configure(state=image_state)
         self.output_dir_button.configure(state="normal")
+        self.set_cwd_button.configure(state="normal")
         self.split_button.configure(state=split_state)
 
     def open_image(self) -> None:
@@ -377,6 +406,12 @@ class AutoCropApp:
 
         self._set_output_dir(Path(selected_dir), user_selected=True)
         self.status_var.set(f"저장 폴더를 설정했습니다: {selected_dir}")
+
+    def set_output_to_cwd(self) -> None:
+        """Set the output directory to the current working directory."""
+        cwd = Path.cwd()
+        self._set_output_dir(cwd, user_selected=True)
+        self.status_var.set(f"저장 폴더를 현재 작업 폴더로 설정했습니다: {cwd}")
 
     def _set_output_dir(self, path: Path | None, user_selected: bool = False) -> None:
         self.output_dir = path
@@ -513,6 +548,267 @@ class AutoCropApp:
         base_dir = self.output_dir if self.output_dir is not None else Path.cwd()
         return base_dir / f"{self.loaded_image.save_stem}_crop_config.json"
 
+    def open_batch_process_dialog(self) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("다중 파일 배치 처리")
+        dialog.geometry("800x600")
+        dialog.minsize(640, 480)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # --- Variables ---
+        config_source_var = tk.StringVar(value="current")
+        json_path_var = tk.StringVar()
+        batch_output_dir_var = tk.StringVar()
+        create_subfolder_var = tk.BooleanVar(value=True)
+        file_list: list[Path] = []
+
+        # --- Main frame ---
+        main_frame = ttk.Frame(dialog, padding=15)
+        main_frame.pack(fill="both", expand=True)
+        main_frame.rowconfigure(0, weight=1)
+        main_frame.columnconfigure(0, weight=1)
+
+        # --- File List Frame ---
+        files_frame = ttk.LabelFrame(main_frame, text="처리할 파일 목록", padding=10)
+        files_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
+        files_frame.rowconfigure(0, weight=1)
+        files_frame.columnconfigure(0, weight=1)
+
+        listbox_frame = ttk.Frame(files_frame)
+        listbox_frame.grid(row=0, column=0, sticky="nsew")
+        listbox_frame.rowconfigure(0, weight=1)
+        listbox_frame.columnconfigure(0, weight=1)
+
+        file_listbox = tk.Listbox(listbox_frame, selectmode="extended")
+        file_listbox.grid(row=0, column=0, sticky="nsew")
+
+        list_yscroll = ttk.Scrollbar(listbox_frame, orient="vertical", command=file_listbox.yview)
+        list_yscroll.grid(row=0, column=1, sticky="ns")
+        file_listbox.configure(yscrollcommand=list_yscroll.set)
+
+        list_xscroll = ttk.Scrollbar(listbox_frame, orient="horizontal", command=file_listbox.xview)
+        list_xscroll.grid(row=1, column=0, sticky="ew")
+        file_listbox.configure(xscrollcommand=list_xscroll.set)
+
+        def update_file_listbox() -> None:
+            file_listbox.delete(0, "end")
+            for f in file_list:
+                file_listbox.insert("end", str(f))
+
+        def add_files() -> None:
+            paths = filedialog.askopenfilenames(
+                title="처리할 이미지들을 선택하세요",
+                filetypes=SUPPORTED_FILE_TYPES,
+                parent=dialog,
+            )
+            if not paths:
+                return
+
+            new_paths = {Path(p) for p in paths}
+            current_paths = set(file_list)
+            file_list.extend(sorted(list(new_paths - current_paths)))
+            update_file_listbox()
+
+        def add_folder() -> None:
+            dir_path = filedialog.askdirectory(
+                title="이미지가 포함된 폴더를 선택하세요",
+                mustexist=True,
+                parent=dialog,
+            )
+            if not dir_path:
+                return
+
+            folder_path = Path(dir_path)
+            new_paths = set()
+            for suffix in SUPPORTED_IMAGE_SUFFIXES:
+                new_paths.update(folder_path.rglob(f"*{suffix.lower()}"))
+                new_paths.update(folder_path.rglob(f"*{suffix.upper()}"))
+
+            current_paths = set(file_list)
+            file_list.extend(sorted(list(new_paths - current_paths)))
+            update_file_listbox()
+
+        def remove_selected() -> None:
+            selected_indices = file_listbox.curselection()
+            if not selected_indices:
+                return
+
+            for i in sorted(selected_indices, reverse=True):
+                del file_list[i]
+            update_file_listbox()
+
+        def clear_all() -> None:
+            file_list.clear()
+            update_file_listbox()
+
+        file_buttons_frame = ttk.Frame(files_frame)
+        file_buttons_frame.grid(row=0, column=1, sticky="n", padx=(10, 0))
+
+        ttk.Button(file_buttons_frame, text="파일 추가", command=add_files).pack(fill="x", pady=2)
+        ttk.Button(file_buttons_frame, text="폴더 추가", command=add_folder).pack(fill="x", pady=2)
+        ttk.Button(file_buttons_frame, text="선택 삭제", command=remove_selected).pack(fill="x", pady=(10, 2))
+        ttk.Button(file_buttons_frame, text="전체 삭제", command=clear_all).pack(fill="x", pady=2)
+
+        # --- Config Frame ---
+        config_frame = ttk.LabelFrame(main_frame, text="적용할 분할 규칙", padding=10)
+        config_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        config_frame.columnconfigure(1, weight=1)
+
+        def browse_json() -> None:
+            path = filedialog.askopenfilename(title="설정 파일 불러오기", filetypes=CONFIG_FILE_TYPES, parent=dialog)
+            if path:
+                json_path_var.set(path)
+
+        def toggle_json_input(*_: object) -> None:
+            is_json_mode = config_source_var.get() == "json"
+            state = "normal" if is_json_mode else "disabled"
+            json_path_entry.config(state="readonly" if is_json_mode else "disabled")
+            json_browse_button.config(state=state)
+
+        current_settings_radio = ttk.Radiobutton(
+            config_frame, text="현재 창의 분할 설정 사용", variable=config_source_var, value="current", command=toggle_json_input
+        )
+        current_settings_radio.grid(row=0, column=0, columnspan=3, sticky="w")
+
+        if not self.is_configured or not self.rectangles:
+            current_settings_radio.config(state="disabled")
+            config_source_var.set("json")
+
+        json_settings_radio = ttk.Radiobutton(
+            config_frame, text="JSON 설정 파일 사용:", variable=config_source_var, value="json", command=toggle_json_input
+        )
+        json_settings_radio.grid(row=1, column=0, sticky="w", pady=(5, 0))
+        json_path_entry = ttk.Entry(config_frame, textvariable=json_path_var, state="disabled")
+        json_path_entry.grid(row=1, column=1, sticky="ew", padx=(5, 5), pady=(5, 0))
+        json_browse_button = ttk.Button(config_frame, text="찾아보기...", command=browse_json, state="disabled")
+        json_browse_button.grid(row=1, column=2, sticky="w", pady=(5, 0))
+        toggle_json_input()
+
+        # --- Output Frame ---
+        output_frame = ttk.LabelFrame(main_frame, text="결과물 저장 위치", padding=10)
+        output_frame.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        output_frame.columnconfigure(0, weight=1)
+
+        def choose_batch_output_dir() -> None:
+            path = filedialog.askdirectory(title="결과물을 저장할 폴더를 선택하세요", mustexist=True, parent=dialog)
+            if path:
+                batch_output_dir_var.set(path)
+
+        ttk.Label(output_frame, textvariable=batch_output_dir_var).grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        batch_output_dir_var.set(str(self.output_dir) if self.output_dir else "폴더를 선택하세요...")
+        ttk.Button(output_frame, text="폴더 선택", command=choose_batch_output_dir).grid(row=0, column=1, sticky="e")
+
+        subfolder_checkbox = ttk.Checkbutton(
+            output_frame,
+            text="각 원본 이미지 이름으로 하위 폴더 생성",
+            variable=create_subfolder_var,
+        )
+        subfolder_checkbox.grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 0))
+
+        # --- Action Frame ---
+        action_frame = ttk.Frame(main_frame)
+        action_frame.grid(row=3, column=0, sticky="sew", pady=(10, 0))
+        action_frame.columnconfigure(0, weight=1)
+
+        progress_bar = ttk.Progressbar(action_frame, orient="horizontal", mode="determinate")
+        progress_bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+
+        action_buttons_frame = ttk.Frame(action_frame)
+        action_buttons_frame.grid(row=1, column=0, columnspan=2, sticky="e")
+
+        def start_batch_processing() -> None:
+            if not file_list:
+                messagebox.showerror("오류", "처리할 파일이 없습니다. 목록에 파일을 추가하세요.", parent=dialog)
+                return
+
+            output_dir_str = batch_output_dir_var.get()
+            if not output_dir_str or "폴더를 선택하세요" in output_dir_str:
+                messagebox.showerror("오류", "결과물을 저장할 폴더를 선택하세요.", parent=dialog)
+                return
+
+            output_dir = Path(output_dir_str)
+            if not output_dir.is_dir():
+                messagebox.showerror("오류", "선택한 저장 폴더가 유효하지 않습니다.", parent=dialog)
+                return
+
+            crop_rects: list[CropRectangle] | None = None
+            source_image_size: tuple[int, int] | None = None
+
+            source = config_source_var.get()
+            if source == "current":
+                if not self.is_configured or not self.rectangles:
+                    messagebox.showerror("오류", "현재 창에 유효한 분할 설정이 없습니다.", parent=dialog)
+                    return
+                crop_rects = self.rectangles
+
+            elif source == "json":
+                json_path_str = json_path_var.get()
+                if not json_path_str:
+                    messagebox.showerror("오류", "사용할 JSON 설정 파일을 선택하세요.", parent=dialog)
+                    return
+
+                json_path = Path(json_path_str)
+                if not json_path.is_file():
+                    messagebox.showerror("오류", "선택한 JSON 파일이 존재하지 않습니다.", parent=dialog)
+                    return
+
+                try:
+                    data = json.loads(json_path.read_text(encoding="utf-8"))
+                    rect_data = data.get("rectangles", [])
+                    if not rect_data:
+                        raise ValueError("JSON 파일에 사각형 정보가 없습니다.")
+
+                    crop_rects = [
+                        CropRectangle(
+                            left=int(item.get("left", 0)),
+                            top=int(item.get("top", 0)),
+                            right=int(item.get("right", 0)),
+                            bottom=int(item.get("bottom", 0)),
+                        )
+                        for item in rect_data
+                    ]
+
+                    size_info = data.get("image_size", {})
+                    saved_width = int(size_info.get("width", 0))
+                    saved_height = int(size_info.get("height", 0))
+                    if saved_width <= 0 or saved_height <= 0:
+                        raise ValueError("JSON 파일에 유효한 이미지 크기 정보가 없습니다.")
+                    source_image_size = (saved_width, saved_height)
+
+                except Exception as exc:
+                    messagebox.showerror("JSON 오류", f"JSON 파일을 읽는 중 오류가 발생했습니다.\n{exc}", parent=dialog)
+                    return
+
+            if not crop_rects:
+                messagebox.showerror("오류", "적용할 분할 규칙을 가져올 수 없습니다.", parent=dialog)
+                return
+
+            start_button.config(state="disabled")
+            close_button.config(state="disabled")
+
+            thread = threading.Thread(
+                target=self._perform_batch_job,
+                args=(
+                    dialog,
+                    progress_bar,
+                    file_list,
+                    crop_rects,
+                    output_dir,
+                    source_image_size,
+                    create_subfolder_var.get(),
+                ),
+                daemon=True,
+            )
+            thread.start()
+
+        start_button = ttk.Button(action_buttons_frame, text="배치 작업 시작", command=start_batch_processing)
+        start_button.pack(side="left", padx=5)
+        close_button = ttk.Button(action_buttons_frame, text="닫기", command=dialog.destroy)
+        close_button.pack(side="left", padx=5)
+
+        dialog.wait_window()
+
     def zoom_by(self, factor: float, focus_event: tk.Event | None = None) -> None:
         if not self.loaded_image:
             return
@@ -627,6 +923,26 @@ class AutoCropApp:
         else:
             self.canvas.yview_moveto(0)
 
+    def on_motion(self, event: tk.Event) -> None:
+        if self.drag_context:
+            return
+        if not self.loaded_image:
+            self.canvas.config(cursor="")
+            return
+
+        point = self._event_to_image_point(event)
+        if not point:
+            self.canvas.config(cursor="")
+            return
+
+        handle_pos = self._find_handle_at(*point)
+        if handle_pos:
+            self.canvas.config(cursor=self.HANDLE_CURSORS[handle_pos])
+        elif self._find_rectangle_at(*point) is not None:
+            self.canvas.config(cursor="fleur")
+        else:
+            self.canvas.config(cursor="crosshair")
+
     def on_left_press(self, event: tk.Event) -> None:
         if not self.loaded_image:
             return
@@ -639,6 +955,22 @@ class AutoCropApp:
             return
 
         x, y = point
+
+        # Check for resize handle press on the selected rectangle
+        if self.selected_rectangle_index is not None:
+            handle_pos = self._find_handle_at(x, y)
+            if handle_pos:
+                self.drag_context = {
+                    "kind": "resize",
+                    "index": self.selected_rectangle_index,
+                    "handle": handle_pos,
+                    "origin": self.rectangles[self.selected_rectangle_index].normalized(),
+                    "shift_pressed": (event.state & SHIFT_MASK) != 0,
+                }
+                self.status_var.set("사각형 크기를 조절하는 중입니다.")
+                self._update_controls()
+                return
+
         index = self._find_rectangle_at(x, y)
         self.selected_rectangle_index = index
 
@@ -655,7 +987,11 @@ class AutoCropApp:
         else:
             self.rectangles.append(CropRectangle(x, y, x, y))
             self.selected_rectangle_index = len(self.rectangles) - 1
-            self.drag_context = {"kind": "create", "index": self.selected_rectangle_index}
+            self.drag_context = {
+                "kind": "create",
+                "index": self.selected_rectangle_index,
+                "shift_pressed": (event.state & SHIFT_MASK) != 0,
+            }
             self.is_configured = False
             self.status_var.set("새 사각형을 만드는 중입니다. 드래그를 놓으면 영역이 확정됩니다.")
 
@@ -673,10 +1009,29 @@ class AutoCropApp:
         x, y = point
         kind = self.drag_context["kind"]
 
-        if kind == "create":
+        if kind == "resize":
+            index = int(self.drag_context["index"])
+            handle = str(self.drag_context["handle"])
+            origin = self.drag_context["origin"]
+            assert isinstance(origin, CropRectangle)
+            shift_pressed = bool(self.drag_context.get("shift_pressed"))
+
+            self.rectangles[index] = self._resize_rectangle(origin, handle, x, y, shift_pressed)
+            self.is_configured = False
+        elif kind == "create":
             index = int(self.drag_context["index"])
             current = self.rectangles[index]
-            self.rectangles[index] = CropRectangle(current.left, current.top, x, y)
+
+            end_x, end_y = x, y
+            if self.drag_context.get("shift_pressed"):
+                start_x, start_y = current.left, current.top
+                dx = end_x - start_x
+                dy = end_y - start_y
+                side = max(abs(dx), abs(dy))
+                end_x = start_x + (side if dx >= 0 else -side)
+                end_y = start_y + (side if dy >= 0 else -side)
+
+            self.rectangles[index] = CropRectangle(current.left, current.top, end_x, end_y)
             self.is_configured = False
         else:
             index = int(self.drag_context["index"])
@@ -767,6 +1122,96 @@ class AutoCropApp:
         self._update_controls()
         self.status_var.set("모든 사각형을 초기화했습니다.")
 
+    def open_grid_generator_dialog(self) -> None:
+        if not self.loaded_image:
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("그리드 생성")
+        dialog.geometry("320x200")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, padding=15)
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(1, weight=1)
+
+        ttk.Label(frame, text="행 (Rows):").grid(row=0, column=0, sticky="w", pady=5)
+        rows_var = tk.StringVar(value="2")
+        rows_entry = ttk.Entry(frame, textvariable=rows_var, width=10)
+        rows_entry.grid(row=0, column=1, sticky="ew", padx=(10, 0))
+
+        ttk.Label(frame, text="열 (Columns):").grid(row=1, column=0, sticky="w", pady=5)
+        cols_var = tk.StringVar(value="2")
+        cols_entry = ttk.Entry(frame, textvariable=cols_var, width=10)
+        cols_entry.grid(row=1, column=1, sticky="ew", padx=(10, 0))
+
+        ttk.Label(frame, text="간격 (Padding, px):").grid(row=2, column=0, sticky="w", pady=5)
+        padding_var = tk.StringVar(value="0")
+        padding_entry = ttk.Entry(frame, textvariable=padding_var, width=10)
+        padding_entry.grid(row=2, column=1, sticky="ew", padx=(10, 0))
+
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=(20, 0))
+
+        def on_generate() -> None:
+            try:
+                rows = int(rows_var.get())
+                cols = int(cols_var.get())
+                padding = int(padding_var.get())
+                if rows <= 0 or cols <= 0 or padding < 0:
+                    raise ValueError("Values must be positive.")
+            except ValueError:
+                messagebox.showerror("입력 오류", "행, 열, 간격에 유효한 양의 정수를 입력하세요.", parent=dialog)
+                return
+
+            self.generate_grid_rectangles(rows, cols, padding)
+            dialog.destroy()
+
+        generate_button = ttk.Button(button_frame, text="생성", command=on_generate)
+        generate_button.pack(side="left", padx=5)
+
+        cancel_button = ttk.Button(button_frame, text="취소", command=dialog.destroy)
+        cancel_button.pack(side="left", padx=5)
+
+        dialog.wait_window()
+
+    def generate_grid_rectangles(self, rows: int, cols: int, padding: int) -> None:
+        if not self.loaded_image:
+            return
+
+        img_width, img_height = self.loaded_image.width, self.loaded_image.height
+        total_padding_x, total_padding_y = padding * (cols + 1), padding * (rows + 1)
+        if total_padding_x >= img_width or total_padding_y >= img_height:
+            messagebox.showerror("오류", "간격의 총합이 이미지 크기보다 큽니다.")
+            return
+
+        cell_width, cell_height = (img_width - total_padding_x) / cols, (img_height - total_padding_y) / rows
+        if cell_width < 1 or cell_height < 1:
+            messagebox.showerror("오류", "셀 크기가 1px 미만이 될 수 없습니다. 행/열 또는 간격을 줄여주세요.")
+            return
+
+        self.rectangles = []
+        self.selected_rectangle_index = None
+        self.drag_context = None
+        self.is_configured = False
+
+        self.rectangles = [
+            CropRectangle(
+                round(padding + c * (cell_width + padding)),
+                round(padding + r * (cell_height + padding)),
+                round(padding + c * (cell_width + padding) + cell_width),
+                round(padding + r * (cell_height + padding) + cell_height),
+            )
+            for r in range(rows)
+            for c in range(cols)
+        ]
+
+        self._refresh_overlays()
+        self._update_controls()
+        self.status_var.set(f"{rows}x{cols} 그리드를 생성했습니다. 총 {len(self.rectangles)}개 사각형.")
+
     def apply_settings(self) -> None:
         if not self.loaded_image:
             return
@@ -813,6 +1258,87 @@ class AutoCropApp:
             "분할 완료",
             f"{len(saved_paths)}개 파일을 저장했습니다.\n\n저장 위치:\n{output_dir}",
         )
+
+    def _perform_batch_job(
+        self,
+        dialog: tk.Toplevel,
+        progress_bar: ttk.Progressbar,
+        file_list: list[Path],
+        crop_rects: list[CropRectangle],
+        output_dir: Path,
+        source_image_size: tuple[int, int] | None,
+        create_subfolders: bool,
+    ) -> None:
+        total_files = len(file_list)
+        progress_bar["maximum"] = total_files
+        saved_count = 0
+        error_count = 0
+        errors: list[str] = []
+
+        for i, image_path in enumerate(file_list):
+            try:
+                with Image.open(image_path) as source_image:
+                    current_image = source_image.copy()
+
+                rects_to_apply = crop_rects
+                if source_image_size is not None:
+                    saved_width, saved_height = source_image_size
+                    current_width, current_height = current_image.width, current_image.height
+                    ratio_x = current_width / saved_width if saved_width else 1.0
+                    ratio_y = current_height / saved_height if saved_height else 1.0
+
+                    scaled_rects = [
+                        CropRectangle(
+                            left=round(rect.left * ratio_x),
+                            top=round(rect.top * ratio_y),
+                            right=round(rect.right * ratio_x),
+                            bottom=round(rect.bottom * ratio_y),
+                        )
+                        for rect in crop_rects
+                    ]
+                    rects_to_apply = self._normalize_rectangles_collection(scaled_rects)
+
+                if not rects_to_apply:
+                    raise ValueError("크기 보정 후 유효한 사각형이 없습니다.")
+
+                stem = image_path.stem
+                suffix = self._get_batch_output_suffix(image_path)
+
+                current_output_dir = output_dir
+                if create_subfolders:
+                    current_output_dir = output_dir / stem
+                    current_output_dir.mkdir(parents=True, exist_ok=True)
+
+                for index, rectangle in enumerate(rects_to_apply, start=1):
+                    normalized_rect = rectangle.normalized()
+                    cropped = current_image.crop(
+                        (normalized_rect.left, normalized_rect.top, normalized_rect.right, normalized_rect.bottom)
+                    )
+                    target_path = self._build_output_path(current_output_dir, f"{stem}_rect_{index:02d}", suffix)
+                    self._save_cropped_image(cropped, target_path)
+                    saved_count += 1
+            except Exception as exc:
+                error_count += 1
+                errors.append(f"{image_path.name}: {exc}")
+            finally:
+                dialog.after(0, lambda p=i + 1: progress_bar.config(value=p))
+
+        def show_final_message() -> None:
+            message = f"배치 처리가 완료되었습니다.\n\n총 {total_files}개 파일 처리 시도\n성공적으로 저장된 조각: {saved_count}개"
+            if error_count > 0:
+                message += f"\n오류 발생: {error_count}개 파일"
+                if errors and len(errors) < 5:
+                    message += "\n\n오류 상세:\n" + "\n".join(errors)
+            messagebox.showinfo("완료", message, parent=dialog)
+            dialog.destroy()
+
+        dialog.after(0, show_final_message)
+
+    def _get_batch_output_suffix(self, image_path: Path) -> str:
+        suffix = image_path.suffix.lower()
+        if suffix in SUPPORTED_IMAGE_SUFFIXES:
+            return suffix
+        return ".png"
 
     def _resolve_output_suffix(self) -> str:
         assert self.loaded_image is not None
@@ -888,6 +1414,18 @@ class AutoCropApp:
                 return index
         return None
 
+    def _find_handle_at(self, x: int, y: int) -> str | None:
+        if self.selected_rectangle_index is None:
+            return None
+
+        rect = self.rectangles[self.selected_rectangle_index]
+        hitboxes = self._get_handle_hitboxes(rect)
+
+        for name, (x1, y1, x2, y2) in hitboxes.items():
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return name
+        return None
+
     def _move_rectangle_within_bounds(self, rectangle: CropRectangle, dx: int, dy: int) -> CropRectangle:
         assert self.loaded_image is not None
 
@@ -900,6 +1438,50 @@ class AutoCropApp:
         left = min(max(normalized.left + dx, 0), max_left)
         top = min(max(normalized.top + dy, 0), max_top)
         return CropRectangle(left, top, left + width, top + height)
+
+    def _resize_rectangle(
+        self, rect: CropRectangle, handle: str, mx: int, my: int, shift_pressed: bool = False
+    ) -> CropRectangle:
+        l, t, r, b = rect.left, rect.top, rect.right, rect.bottom
+
+        is_corner_handle = "-" in handle
+        if shift_pressed and is_corner_handle:
+            orig_width = r - l
+            orig_height = b - t
+
+            if orig_width != 0 and orig_height != 0:
+                aspect_ratio = orig_width / orig_height
+
+                # Use float for calculations
+                fl, ft, fr, fb = float(l), float(t), float(r), float(b)
+                fmx = float(mx)
+
+                if handle == "bottom-right":  # Anchor: top-left
+                    fr = fmx
+                    fb = ft + (fr - fl) / aspect_ratio
+                elif handle == "top-left":  # Anchor: bottom-right
+                    fl = fmx
+                    ft = fb - (fr - fl) / aspect_ratio
+                elif handle == "top-right":  # Anchor: bottom-left
+                    fr = fmx
+                    ft = fb - (fr - fl) / aspect_ratio
+                elif handle == "bottom-left":  # Anchor: top-right
+                    fl = fmx
+                    fb = ft + (fr - fl) / aspect_ratio
+
+                return CropRectangle(round(fl), round(ft), round(fr), round(fb))
+
+        # Default behavior
+        if "top" in handle:
+            t = my
+        if "bottom" in handle:
+            b = my
+        if "left" in handle:
+            l = mx
+        if "right" in handle:
+            r = mx
+
+        return CropRectangle(l, t, r, b)
 
     def _normalize_rectangle(self, rectangle: CropRectangle) -> CropRectangle | None:
         assert self.loaded_image is not None
@@ -967,6 +1549,70 @@ class AutoCropApp:
                 font=("Malgun Gothic", 11, "bold"),
                 tags=("overlay",),
             )
+
+            if selected:
+                self._draw_handles(rect)
+
+    def _draw_handles(self, rect: CropRectangle) -> None:
+        handle_offset = HANDLE_SIZE / 2
+        fill = "#ef4444"
+        outline = "white"
+        tags = ("overlay", "handle")
+
+        positions = self._get_handle_canvas_positions(rect)
+
+        for pos in positions.values():
+            self.canvas.create_rectangle(
+                pos[0] - handle_offset,
+                pos[1] - handle_offset,
+                pos[0] + handle_offset,
+                pos[1] + handle_offset,
+                fill=fill,
+                outline=outline,
+                tags=tags,
+            )
+
+    def _get_handle_canvas_positions(self, rect: CropRectangle) -> dict[str, tuple[float, float]]:
+        r = rect.normalized()
+        left = r.left * self.zoom
+        top = r.top * self.zoom
+        right = r.right * self.zoom
+        bottom = r.bottom * self.zoom
+        mid_x = (left + right) / 2
+        mid_y = (top + bottom) / 2
+
+        return {
+            "top-left": (left, top),
+            "top-right": (right, top),
+            "bottom-left": (left, bottom),
+            "bottom-right": (right, bottom),
+            "top": (mid_x, top),
+            "bottom": (mid_x, bottom),
+            "left": (left, mid_y),
+            "right": (right, mid_y),
+        }
+
+    def _get_handle_hitboxes(self, rect: CropRectangle) -> dict[str, tuple[float, float, float, float]]:
+        if not self.loaded_image:
+            return {}
+
+        handle_size_in_image_coords = HANDLE_SIZE / self.zoom
+        offset = handle_size_in_image_coords / 2
+
+        r = rect.normalized()
+        mid_x = (r.left + r.right) / 2
+        mid_y = (r.top + r.bottom) / 2
+
+        return {
+            "top-left": (r.left - offset, r.top - offset, r.left + offset, r.top + offset),
+            "top-right": (r.right - offset, r.top - offset, r.right + offset, r.top + offset),
+            "bottom-left": (r.left - offset, r.bottom - offset, r.left + offset, r.bottom + offset),
+            "bottom-right": (r.right - offset, r.bottom - offset, r.right + offset, r.bottom + offset),
+            "top": (mid_x - offset, r.top - offset, mid_x + offset, r.top + offset),
+            "bottom": (mid_x - offset, r.bottom - offset, mid_x + offset, r.bottom + offset),
+            "left": (r.left - offset, mid_y - offset, r.left + offset, mid_y + offset),
+            "right": (r.right - offset, mid_y - offset, r.right + offset, mid_y + offset),
+        }
 
 
 def main() -> int:

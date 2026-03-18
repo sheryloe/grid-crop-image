@@ -67,9 +67,9 @@
           크롭 전용 도구
         </h1>
         <p class="mt-6 max-w-2xl text-lg leading-8 text-slate-300">
-          grid-crop-image는 블로그 작성, QA 리포트, 문서 정리에 필요한 스크린샷 자르기 작업을
-          빠르게 처리하기 위한 Windows용 유틸리티입니다. 복잡한 편집기가 아니라,
-          반복 작업을 줄여주는 실전 도구라는 점이 핵심입니다.
+          grid-crop-image는 반복적인 이미지 분할 및 저장 작업을 자동화하는 Windows용 유틸리티입니다.
+          그리드 자동 생성, 강력한 배치 처리 기능으로 단순 스크린샷 분할을 넘어
+          대량의 이미지 자산을 효율적으로 관리할 수 있습니다.
         </p>
         <div class="mt-7 flex flex-wrap gap-3">
           <a class="btn btn-warning text-slate-950" href="https://github.com/sheryloe/grid-crop-image">저장소 보기</a>
@@ -86,10 +86,10 @@
     </section>
 
     <section id="features" class="grid gap-5 lg:grid-cols-4">
-      <article class="glass rounded-[1.75rem] p-6"><i data-lucide="clipboard-paste" class="h-8 w-8 text-orange-300"></i><h2 class="display-font mt-4 text-2xl font-bold text-white">Clipboard</h2><p class="mt-3 text-slate-300">클립보드에서 바로 붙여넣어 작업을 시작할 수 있습니다.</p></article>
-      <article class="glass rounded-[1.75rem] p-6"><i data-lucide="grid-2x2" class="h-8 w-8 text-orange-300"></i><h2 class="display-font mt-4 text-2xl font-bold text-white">Multi Select</h2><p class="mt-3 text-slate-300">여러 영역을 동시에 선택해 순차적으로 크롭할 수 있습니다.</p></article>
-      <article class="glass rounded-[1.75rem] p-6"><i data-lucide="file-json-2" class="h-8 w-8 text-orange-300"></i><h2 class="display-font mt-4 text-2xl font-bold text-white">JSON Layout</h2><p class="mt-3 text-slate-300">반복되는 잘라내기 패턴을 레이아웃으로 저장해 재사용할 수 있습니다.</p></article>
-      <article class="glass rounded-[1.75rem] p-6"><i data-lucide="package" class="h-8 w-8 text-orange-300"></i><h2 class="display-font mt-4 text-2xl font-bold text-white">Windows Build</h2><p class="mt-3 text-slate-300">PyInstaller 기반 EXE 빌드 흐름을 이미 갖고 있습니다.</p></article>
+      <article class="glass rounded-[1.75rem] p-6"><i data-lucide="move-diagonal" class="h-8 w-8 text-orange-300"></i><h2 class="display-font mt-4 text-2xl font-bold text-white">직관적인 편집</h2><p class="mt-3 text-slate-300">크기 조절 핸들, 비율 유지(`Shift`) 등 정교한 영역 편집을 지원합니다.</p></article>
+      <article class="glass rounded-[1.75rem] p-6"><i data-lucide="layout-grid" class="h-8 w-8 text-orange-300"></i><h2 class="display-font mt-4 text-2xl font-bold text-white">그리드 자동 생성</h2><p class="mt-3 text-slate-300">행, 열, 간격만 입력하면 전체 이미지를 균일한 격자로 자동 분할합니다.</p></article>
+      <article class="glass rounded-[1.75rem] p-6"><i data-lucide="files" class="h-8 w-8 text-orange-300"></i><h2 class="display-font mt-4 text-2xl font-bold text-white">강력한 배치 처리</h2><p class="mt-3 text-slate-300">하나의 분할 규칙을 수백 장의 이미지에 한 번에 적용하여 작업을 자동화합니다.</p></article>
+      <article class="glass rounded-[1.75rem] p-6"><i data-lucide="file-json-2" class="h-8 w-8 text-orange-300"></i><h2 class="display-font mt-4 text-2xl font-bold text-white">설정 재사용</h2><p class="mt-3 text-slate-300">자주 쓰는 레이아웃을 JSON으로 저장하고, 다른 크기의 이미지에도 다시 사용합니다.</p></article>
     </section>
 
     <section id="flow" class="glass rounded-[2rem] p-8 lg:p-10">
@@ -106,9 +106,9 @@
     </section>
 
     <section id="todo" class="grid gap-5 lg:grid-cols-3">
-      <article class="glass rounded-[1.75rem] p-6"><span class="badge badge-info">Product</span><h2 class="display-font mt-4 text-2xl font-bold text-white">프리셋 저장</h2><p class="mt-3 text-slate-300">자주 쓰는 크롭 방식이 기본 프리셋으로 바로 보여야 합니다.</p></article>
-      <article class="glass rounded-[1.75rem] p-6"><span class="badge badge-success">Workflow</span><h2 class="display-font mt-4 text-2xl font-bold text-white">배치 처리</h2><p class="mt-3 text-slate-300">여러 장의 이미지를 같은 레이아웃으로 잘라내는 기능이 강력한 다음 단계입니다.</p></article>
-      <article class="glass rounded-[1.75rem] p-6"><span class="badge badge-warning">Utility</span><h2 class="display-font mt-4 text-2xl font-bold text-white">Undo / OCR</h2><p class="mt-3 text-slate-300">실수 복구와 OCR 보조 기능이 들어가면 실제 작업 시간이 더 줄어듭니다.</p></article>
+      <article class="glass rounded-[1.75rem] p-6"><span class="badge badge-info">Utility</span><h2 class="display-font mt-4 text-2xl font-bold text-white">실행 취소 / 다시 실행</h2><p class="mt-3 text-slate-300">사용자의 실수를 되돌릴 수 있는 기능으로 편집 안정성을 높입니다.</p></article>
+      <article class="glass rounded-[1.75rem] p-6"><span class="badge badge-success">Product</span><h2 class="display-font mt-4 text-2xl font-bold text-white">사각형 목록 관리</h2><p class="mt-3 text-slate-300">분할 영역 목록을 보고, 순서를 바꾸거나 이름을 편집하는 기능을 추가합니다.</p></article>
+      <article class="glass rounded-[1.75rem] p-6"><span class="badge badge-warning">Workflow</span><h2 class="display-font mt-4 text-2xl font-bold text-white">OCR 보조 기능</h2><p class="mt-3 text-slate-300">이미지 속 텍스트를 인식해 분할 영역을 추천하거나 파일명을 자동 생성합니다.</p></article>
     </section>
   </main>
 
