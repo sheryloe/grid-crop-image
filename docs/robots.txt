@@ -1,3 +1,0 @@
-User-agent: *
-Allow: /
-Sitemap: https://sheryloe.github.io/grid-crop-image/sitemap.xml

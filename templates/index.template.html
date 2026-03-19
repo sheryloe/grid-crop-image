@@ -26,7 +26,6 @@
   <style>
     :root {
       --bg: #f6f0e5;
-      --bg-soft: rgba(255, 255, 255, 0.76);
       --card: rgba(255, 253, 249, 0.92);
       --line: rgba(19, 34, 26, 0.12);
       --text: #1f2a22;
@@ -114,8 +113,7 @@
     .hero-card {
       padding: 36px;
       border-radius: var(--radius-xl);
-      background:
-        linear-gradient(145deg, rgba(255, 249, 240, 0.95), rgba(255, 255, 255, 0.88));
+      background: linear-gradient(145deg, rgba(255, 249, 240, 0.95), rgba(255, 255, 255, 0.88));
       border: 1px solid rgba(19, 34, 26, 0.08);
       box-shadow: var(--shadow);
     }
@@ -344,7 +342,7 @@ __SCHEMA_JSON__
     <div class="wrap">
       <div class="topbar">
         <div class="brand">__PROGRAM_NAME__</div>
-        <nav class="nav" aria-label="바로가기">
+        <nav class="nav" aria-label="Quick links">
           <a href="__REPO_URL__">GitHub Repository</a>
           <a href="__README_URL__">README</a>
           <a href="#faq">FAQ</a>
@@ -357,24 +355,24 @@ __SCHEMA_JSON__
           <span class="badge">Clipboard Paste</span>
           <span class="badge">JSON Layout Save</span>
         </div>
-        <h1 id="hero-title">스크린샷 자르기와 이미지 분할을 더 빠르게.</h1>
-        <p class="lead">__DESCRIPTION_KO__ 한 장의 이미지를 여러 개의 직사각형 영역으로 나눠 저장하고, 반복 레이아웃은 JSON 설정 파일로 다시 불러올 수 있습니다.</p>
+        <h1 id="hero-title">빠르게 자르고, 여러 조각으로 저장하는 Windows 이미지 도구</h1>
+        <p class="lead">__DESCRIPTION_KO__ 반복되는 스크린샷 자르기, 블로그용 이미지 분할, 동일한 레이아웃 재사용 작업을 빠르게 처리할 수 있습니다.</p>
         <div class="hero-actions">
-          <a class="button primary" href="__REPO_URL__">저장소 보기</a>
-          <a class="button" href="__README_URL__">사용 가이드 읽기</a>
+          <a class="button primary" href="__REPO_URL__">Repository</a>
+          <a class="button" href="__README_URL__">Usage Guide</a>
         </div>
         <div class="stats">
           <article class="card">
             <span class="stat-value">Ctrl + V</span>
-            클립보드 이미지 붙여넣기와 파일 목록 감지를 지원합니다.
+            클립보드 이미지를 바로 불러와 파일 저장 없이 작업을 시작할 수 있습니다.
           </article>
           <article class="card">
             <span class="stat-value">JSON Save</span>
-            크롭 좌표와 줌 상태를 저장하고 다시 불러올 수 있습니다.
+            크롭 좌표와 작업 상태를 저장하고 다시 불러올 수 있습니다.
           </article>
           <article class="card">
             <span class="stat-value">Ordered Export</span>
-            지정한 사각형 순서대로 이미지 파일을 자동 저장합니다.
+            선택한 순서대로 결과 파일을 정리해서 저장합니다.
           </article>
         </div>
       </section>
@@ -386,21 +384,21 @@ __SCHEMA_JSON__
       <div class="wrap">
         <div class="section-head">
           <span class="eyebrow">Why This Tool</span>
-          <h2>왜 __PROGRAM_NAME__가 필요한가</h2>
-          <p>포토샵 같은 무거운 편집기 없이 스크린샷 자르기, 긴 이미지 분할, 클립보드 기반 작업, 반복 크롭 레이아웃 재사용을 빠르게 처리하기 위한 목적형 도구입니다.</p>
+          <h2>반복 작업에 맞춘 이미지 분할 도구</h2>
+          <p>무거운 편집기 대신 빠르게 실행되고 바로 저장할 수 있는 데스크톱 유틸리티에 초점을 맞췄습니다.</p>
         </div>
         <div class="grid">
           <article class="card">
-            <h3>Windows 이미지 크롭 프로그램</h3>
-            <p>빠르게 실행되는 Tkinter 기반 앱이라 반복 작업에서 부담이 적습니다.</p>
+            <h3>Screenshot Workflow</h3>
+            <p>스크린샷 자르기와 문서용 이미지 정리에 필요한 핵심 흐름만 남겼습니다.</p>
           </article>
           <article class="card">
-            <h3>스크린샷 자르기 도구</h3>
-            <p>캡처 후 바로 붙여넣고 여러 조각으로 나눠 저장하는 흐름에 맞춰져 있습니다.</p>
+            <h3>Reusable Layouts</h3>
+            <p>한 번 만든 크롭 구성을 JSON으로 저장해 같은 형식의 이미지에 반복 적용할 수 있습니다.</p>
           </article>
           <article class="card">
-            <h3>반복 크롭 자동화</h3>
-            <p>JSON 설정 저장과 좌표 보정 덕분에 동일한 분할 작업을 다시 수행하기 쉽습니다.</p>
+            <h3>Windows Distribution</h3>
+            <p>PyInstaller 기반 EXE 빌드를 제공해 Python 환경이 없는 곳에서도 배포하기 쉽습니다.</p>
           </article>
         </div>
       </div>
@@ -411,32 +409,32 @@ __SCHEMA_JSON__
         <div class="section-head">
           <span class="eyebrow">Core Features</span>
           <h2>핵심 기능</h2>
-          <p>검색 키워드만 맞춘 페이지가 아니라 실제 사용자 작업 흐름에 맞는 기능을 요약했습니다.</p>
+          <p>실제 작업 흐름에 직접 연결되는 기능만 중심으로 구성했습니다.</p>
         </div>
         <div class="grid">
           <article class="card">
-            <h3>클립보드 이미지 붙여넣기</h3>
-            <p>`Ctrl + V`로 이미지 데이터를 바로 불러오고, 파일 복사 상황에서는 지원 이미지 자동 감지를 수행합니다.</p>
+            <h3>Clipboard Paste</h3>
+            <p>`Ctrl + V`로 이미지를 바로 불러와 빠르게 작업을 시작할 수 있습니다.</p>
           </article>
           <article class="card">
-            <h3>다중 사각형 크롭</h3>
-            <p>여러 개의 크롭 사각형을 생성, 이동, 삭제, 초기화할 수 있고 저장 순서도 유지됩니다.</p>
+            <h3>Multi-Region Crop</h3>
+            <p>여러 개의 크롭 영역을 만들고 이동, 삭제, 재정렬할 수 있습니다.</p>
           </article>
           <article class="card">
-            <h3>JSON 설정 저장과 불러오기</h3>
-            <p>원본 이미지 경로, 출력 폴더, 줌, 좌표, 설정 상태를 저장하고 비율 보정도 수행합니다.</p>
+            <h3>JSON Layout Save and Load</h3>
+            <p>반복되는 작업을 위해 좌표와 출력 설정을 저장하고 다시 불러올 수 있습니다.</p>
           </article>
           <article class="card">
-            <h3>확대, 축소, 맞춤 보기</h3>
-            <p>Ctrl + 마우스휠 확대/축소, Shift + 마우스휠 가로 스크롤로 긴 이미지도 정밀하게 조정할 수 있습니다.</p>
+            <h3>Zoom Controls</h3>
+            <p>확대, 축소, 100%, 맞춤 보기로 세밀한 영역 선택을 돕습니다.</p>
           </article>
           <article class="card">
-            <h3>순차 파일 저장</h3>
-            <p>확정한 사각형 순서대로 `rect_01`, `rect_02` 형식으로 저장하고 중복 파일명도 자동 회피합니다.</p>
+            <h3>Ordered Export</h3>
+            <p>정해진 순서대로 파일명을 붙여 결과물을 안정적으로 저장합니다.</p>
           </article>
           <article class="card">
-            <h3>Windows EXE 빌드</h3>
-            <p>PyInstaller로 `__ALTERNATE_NAME__.exe`를 만들 수 있어 Python 환경이 없는 곳에도 배포하기 좋습니다.</p>
+            <h3>Stable EXE Build</h3>
+            <p>현재 빌드 흐름은 자동 의존성 설치와 잠금 우회 로직을 포함합니다.</p>
           </article>
         </div>
       </div>
@@ -446,46 +444,22 @@ __SCHEMA_JSON__
       <div class="wrap">
         <div class="section-head">
           <span class="eyebrow">Workflow</span>
-          <h2>작업 흐름은 짧게 유지했습니다</h2>
-          <p>이미지를 불러오는 순간부터 저장까지의 단계가 명확해야 Search Console용 랜딩 페이지도 사용자 기대와 맞아집니다.</p>
+          <h2>작업 흐름</h2>
+          <p>처음 이미지 로드부터 결과 저장까지의 단계를 단순하게 유지했습니다.</p>
         </div>
         <div class="flow">
           <article class="card">
-            <h3>추천 작업 순서</h3>
-            <p>로컬 파일을 열거나 클립보드 이미지를 붙여넣고, 저장 폴더를 확인한 뒤, 사각형을 만든 후 `설정`으로 확정하고 `분할 시작`으로 저장합니다. 이 구조 덕분에 저장 조건이 명확하고 반복 작업도 예측 가능합니다.</p>
+            <h3>Recommended Flow</h3>
+            <p>이미지를 열거나 붙여넣고, 출력 폴더를 정한 뒤, 크롭 영역을 만든 다음 설정을 확정하고 저장하면 됩니다. 같은 작업을 반복할 경우 JSON 레이아웃을 다시 불러와 시간을 줄일 수 있습니다.</p>
           </article>
-          <aside class="card" aria-label="작업 단계">
+          <aside class="card" aria-label="Workflow steps">
             <ol class="steps">
-              <li><span class="step-no">01</span><div>이미지 열기 또는 <strong>Ctrl + V</strong> 붙여넣기</div></li>
-              <li><span class="step-no">02</span><div>저장 폴더 확인 및 변경</div></li>
-              <li><span class="step-no">03</span><div>드래그로 크롭 사각형 생성 및 수정</div></li>
-              <li><span class="step-no">04</span><div><strong>설정</strong> 후 <strong>분할 시작</strong>으로 순차 저장</div></li>
+              <li><span class="step-no">01</span><div>Open an image or paste with <strong>Ctrl + V</strong></div></li>
+              <li><span class="step-no">02</span><div>Choose the output folder</div></li>
+              <li><span class="step-no">03</span><div>Create and adjust crop regions</div></li>
+              <li><span class="step-no">04</span><div>Apply settings and export</div></li>
             </ol>
           </aside>
-        </div>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="wrap">
-        <div class="section-head">
-          <span class="eyebrow">Blog Automation</span>
-          <h2>블로그 이미지 프롬프트 결과를 여러 장으로 나눠 쓰는 흐름</h2>
-          <p>한 번 생성한 멀티패널 이미지 결과를 분할해 썸네일, 본문, SNS용 자산으로 재사용하면 이미지 API 호출 수를 줄이고 비용을 아끼는 데 도움이 됩니다.</p>
-        </div>
-        <div class="grid">
-          <article class="card">
-            <h3>1 Prompt, Many Assets</h3>
-            <p>2x2 또는 3x3 형태로 한 번 생성한 결과물을 잘라 여러 장의 블로그 이미지로 재활용할 수 있습니다.</p>
-          </article>
-          <article class="card">
-            <h3>Traffic Content Workflow</h3>
-            <p>조회수 유입용 포스팅에서 썸네일과 본문 이미지를 빠르게 확보해야 할 때 특히 잘 맞습니다.</p>
-          </article>
-          <article class="card">
-            <h3>Lower Image API Cost</h3>
-            <p>여러 장을 따로 생성하지 않고 한 응답을 나눠 쓰는 방식이라 이미지 생성 비용을 줄이는 전략으로 설명할 수 있습니다.</p>
-          </article>
         </div>
       </div>
     </section>
@@ -495,28 +469,24 @@ __SCHEMA_JSON__
         <div class="section-head">
           <span class="eyebrow">FAQ</span>
           <h2>자주 묻는 질문</h2>
-          <p>GitHub Pages와 Search Console에서 읽기 좋은 Q&A 구조도 같이 넣었습니다.</p>
+          <p>프로젝트 목적과 핵심 사용 흐름을 빠르게 확인할 수 있도록 정리했습니다.</p>
         </div>
         <div class="faq-grid">
           <article class="card">
-            <h3>블로그 이미지 프롬프트 결과도 나눠서 쓸 수 있나요?</h3>
-            <p>가능합니다. 한 번 생성한 2x2, 3x3 결과를 잘라 여러 장의 블로그 자산으로 재사용하면 이미지 API 호출 수와 비용을 줄이는 데 도움이 됩니다.</p>
-          </article>
-          <article class="card">
-            <h3>__PROGRAM_NAME__는 어떤 작업에서 가장 효율적인가요?</h3>
-            <p>스크린샷 자르기, 긴 이미지 분할, 다중 영역 크롭, 반복 레이아웃 저장 작업에 가장 효율적입니다.</p>
+            <h3>어떤 작업에 잘 맞나요?</h3>
+            <p>스크린샷 분할, 블로그 자산 제작, 반복되는 다중 크롭 작업에 적합합니다.</p>
           </article>
           <article class="card">
             <h3>클립보드 이미지도 바로 붙여넣을 수 있나요?</h3>
-            <p>가능합니다. `Ctrl + V`로 이미지 데이터를 바로 불러오고, 복사된 파일 목록에서 지원 이미지를 찾는 흐름도 지원합니다.</p>
+            <p>가능합니다. `Ctrl + V`로 이미지를 바로 가져와 작업을 시작할 수 있습니다.</p>
           </article>
           <article class="card">
-            <h3>JSON 설정 저장은 왜 필요한가요?</h3>
-            <p>같은 크롭 좌표를 반복 작업에 재사용할 수 있고, 이미지 크기가 달라져도 비율 보정으로 다시 적용하기 쉽습니다.</p>
+            <h3>레이아웃을 다시 사용할 수 있나요?</h3>
+            <p>가능합니다. JSON으로 저장한 크롭 레이아웃을 다시 불러와 재사용할 수 있습니다.</p>
           </article>
           <article class="card">
-            <h3>어디서 코드와 가이드를 확인할 수 있나요?</h3>
-            <p>GitHub 저장소와 README에서 코드, 설치, EXE 빌드, Search Console 세팅 문서를 바로 확인할 수 있습니다.</p>
+            <h3>EXE 빌드는 어떻게 하나요?</h3>
+            <p>`build_exe.bat`를 실행하면 의존성 확인부터 빌드까지 자동으로 처리합니다.</p>
           </article>
         </div>
       </div>
@@ -528,7 +498,7 @@ __SCHEMA_JSON__
       <div class="footer">
         <div>
           <strong>__PROGRAM_NAME__</strong><br>
-          Windows 이미지 크롭 및 분할 도구
+          Windows image crop and split tool
         </div>
         <div>
           <a href="__REPO_URL__">Repository</a><br>

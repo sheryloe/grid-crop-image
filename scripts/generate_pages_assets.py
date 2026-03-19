@@ -45,26 +45,26 @@ def build_schema(config: dict[str, object]) -> str:
                 "mainEntity": [
                     {
                         "@type": "Question",
-                        "name": "Grid Crop Image는 어떤 작업에 적합한가요?",
+                        "name": "Grid Crop Image는 어떤 작업에 잘 맞나요?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": "스크린샷 자르기, 긴 이미지 분할, 다중 영역 크롭, 반복 크롭 레이아웃 저장, 클립보드 이미지 붙여넣기 기반 작업에 적합합니다.",
+                            "text": "스크린샷 분할, 블로그 자산 제작, 반복되는 다중 크롭 작업에 적합합니다.",
                         },
                     },
                     {
                         "@type": "Question",
-                        "name": "클립보드 이미지도 바로 붙여넣을 수 있나요?",
+                        "name": "클립보드 이미지를 바로 붙여넣을 수 있나요?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": "가능합니다. Ctrl+V로 클립보드에 있는 이미지 데이터를 바로 불러오거나, 클립보드에 복사된 지원 이미지 파일을 자동으로 감지할 수 있습니다.",
+                            "text": "가능합니다. Ctrl+V로 이미지를 바로 가져와 작업을 시작할 수 있습니다.",
                         },
                     },
                     {
                         "@type": "Question",
-                        "name": "JSON 설정 저장은 왜 필요한가요?",
+                        "name": "JSON 레이아웃을 다시 사용할 수 있나요?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": "같은 유형의 이미지를 반복해서 자를 때 크롭 좌표와 작업 상태를 다시 불러와 재사용할 수 있어 반복 작업 효율을 높여줍니다.",
+                            "text": "가능합니다. 저장한 크롭 좌표와 설정을 다시 불러와 같은 작업을 반복할 수 있습니다.",
                         },
                     },
                 ],
