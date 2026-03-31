@@ -30,7 +30,7 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
     IMAGEGRAB_IMPORT_ERROR = exc
 
 
-APP_TITLE = "그리드 크롭 이미지 고도화 프로젝트"
+APP_TITLE = "Grid Crop Studio"
 SUPPORTED_FILE_TYPES = [
     ("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff"),
     ("All files", "*.*"),
@@ -125,125 +125,302 @@ class AutoCropApp:
         self.last_batch_failures: list[Path] = []
 
         self.zoom_var = tk.StringVar(value="100%")
-        self.output_dir_var = tk.StringVar(value="저장 폴더: 선택되지 않음")
+        self.output_dir_var = tk.StringVar(value="Not selected")
         self.status_var = tk.StringVar(
-            value="이미지를 열거나 Ctrl+V로 클립보드 이미지를 붙여넣은 뒤, 영역을 지정하고 저장 폴더를 확인하세요."
+            value="Load an image or paste from the clipboard to start building crop regions."
         )
         self.instruction_var = tk.StringVar(
             value=(
-                "드래그로 새 사각형을 만들고(Shift: 정사각형), '그리드 생성'으로 자동 분할하세요. 기존 사각형을 드래그하면 이동합니다. 핸들을 드래그하여 크기를 조절할 수 있습니다(Shift: 비율 유지). "
-                "Ctrl+V로 클립보드 이미지를 붙여넣거나, Ctrl+마우스휠로 배율을 조정할 수 있습니다."
+                "Drag on the canvas to create a crop region. Drag inside a region to move it, drag handles to resize it, "
+                "hold Shift to lock a square, and use Ctrl + mouse wheel to zoom."
             )
         )
+        self.image_summary_var = tk.StringVar(value="No image loaded")
+        self.selection_summary_var = tk.StringVar(value="0 regions")
+        self.workspace_summary_var = tk.StringVar(value="Select an output folder to unlock export.")
+        self.mode_summary_var = tk.StringVar(value="Waiting for image")
 
+        self._setup_styles()
         self._build_ui()
         self._bind_events()
         self._show_placeholder()
         self._update_controls()
 
+    def _setup_styles(self) -> None:
+        self.colors = {
+            "bg": "#0d1117",
+            "hero": "#161b22",
+            "surface": "#11161d",
+            "surface_alt": "#1a212b",
+            "panel": "#0f141b",
+            "canvas": "#0a0f14",
+            "text": "#f3efe7",
+            "muted": "#9aa4af",
+            "line": "#293241",
+            "accent": "#ff8a1f",
+            "accent_hover": "#ff9f45",
+            "cool": "#20c7d9",
+            "cool_soft": "#102a31",
+        }
+
+        self.root.configure(bg=self.colors["bg"])
+
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        style.configure(
+            ".",
+            background=self.colors["bg"],
+            foreground=self.colors["text"],
+            fieldbackground=self.colors["surface_alt"],
+            bordercolor=self.colors["line"],
+            lightcolor=self.colors["line"],
+            darkcolor=self.colors["line"],
+            troughcolor=self.colors["panel"],
+            focuscolor=self.colors["accent"],
+        )
+        style.configure("App.TFrame", background=self.colors["bg"])
+        style.configure("Hero.TFrame", background=self.colors["hero"])
+        style.configure("Surface.TFrame", background=self.colors["surface"])
+        style.configure("Panel.TFrame", background=self.colors["panel"])
+        style.configure("Card.TFrame", background=self.colors["surface_alt"])
+        style.configure("HeroTitle.TLabel", background=self.colors["hero"], foreground=self.colors["text"], font=("Bahnschrift SemiBold", 24))
+        style.configure("HeroBody.TLabel", background=self.colors["hero"], foreground=self.colors["muted"], font=("Segoe UI", 10))
+        style.configure("SectionTitle.TLabel", background=self.colors["surface"], foreground=self.colors["text"], font=("Bahnschrift SemiBold", 11))
+        style.configure("PanelTitle.TLabel", background=self.colors["surface"], foreground=self.colors["text"], font=("Bahnschrift SemiBold", 12))
+        style.configure("CardTitle.TLabel", background=self.colors["surface_alt"], foreground=self.colors["muted"], font=("Segoe UI Semibold", 9))
+        style.configure("CardValue.TLabel", background=self.colors["surface_alt"], foreground=self.colors["text"], font=("Segoe UI Semibold", 11))
+        style.configure("Hint.TLabel", background=self.colors["surface"], foreground=self.colors["muted"])
+        style.configure("SidebarValue.TLabel", background=self.colors["surface_alt"], foreground=self.colors["text"], font=("Segoe UI Semibold", 10))
+        style.configure("SidebarHint.TLabel", background=self.colors["surface_alt"], foreground=self.colors["muted"])
+        style.configure("Pill.TLabel", background=self.colors["accent"], foreground=self.colors["bg"], padding=(10, 4), font=("Segoe UI Semibold", 9))
+        style.configure("PillMuted.TLabel", background=self.colors["cool_soft"], foreground=self.colors["cool"], padding=(10, 4), font=("Segoe UI Semibold", 9))
+        style.configure("Status.TLabel", background=self.colors["surface_alt"], foreground=self.colors["text"], padding=(12, 10))
+
+        style.configure("Action.TButton", background=self.colors["surface_alt"], foreground=self.colors["text"], padding=(12, 9), relief="flat", borderwidth=0, font=("Segoe UI Semibold", 9))
+        style.map(
+            "Action.TButton",
+            background=[("active", self.colors["cool_soft"]), ("disabled", self.colors["surface"])],
+            foreground=[("disabled", "#5f6872")],
+        )
+        style.configure("Accent.TButton", background=self.colors["accent"], foreground=self.colors["bg"], padding=(14, 10), relief="flat", borderwidth=0, font=("Bahnschrift SemiBold", 10))
+        style.map(
+            "Accent.TButton",
+            background=[("active", self.colors["accent_hover"]), ("disabled", "#5e3a15")],
+            foreground=[("disabled", "#bca28d")],
+        )
+        style.configure("TEntry", padding=6, fieldbackground=self.colors["surface_alt"], foreground=self.colors["text"])
+        style.configure("TCombobox", padding=6, fieldbackground=self.colors["surface_alt"], foreground=self.colors["text"], arrowsize=14)
+        style.map("TCombobox", fieldbackground=[("readonly", self.colors["surface_alt"])], foreground=[("readonly", self.colors["text"])])
+        style.configure("TCheckbutton", background=self.colors["surface"], foreground=self.colors["text"])
+        style.configure("TRadiobutton", background=self.colors["surface"], foreground=self.colors["text"])
+        style.configure("TScrollbar", background=self.colors["surface_alt"], troughcolor=self.colors["panel"], arrowsize=13)
+        style.configure("Horizontal.TProgressbar", background=self.colors["accent"], troughcolor=self.colors["panel"], borderwidth=0)
+        style.configure("TLabelframe", background=self.colors["surface"], foreground=self.colors["text"], bordercolor=self.colors["line"])
+        style.configure("TLabelframe.Label", background=self.colors["surface"], foreground=self.colors["text"], font=("Segoe UI Semibold", 10))
+        style.configure("TNotebook", background=self.colors["surface"], borderwidth=0)
+        style.configure("TNotebook.Tab", background=self.colors["surface_alt"], foreground=self.colors["muted"], padding=(12, 8))
+        style.map("TNotebook.Tab", background=[("selected", self.colors["accent"]), ("active", self.colors["cool_soft"])], foreground=[("selected", self.colors["bg"]), ("active", self.colors["text"])])
+        style.configure("TSeparator", background=self.colors["line"])
+
+    def _create_button_group(self, parent: ttk.Frame, title: str) -> ttk.Frame:
+        shell = ttk.Frame(parent, style="Surface.TFrame", padding=(14, 12))
+        ttk.Label(shell, text=title, style="SectionTitle.TLabel").pack(anchor="w")
+        row = ttk.Frame(shell, style="Surface.TFrame")
+        row.pack(fill="x", pady=(10, 0))
+        return row
+
+    def _create_info_card(self, parent: ttk.Frame, title: str, value_var: tk.StringVar) -> ttk.Frame:
+        card = ttk.Frame(parent, style="Card.TFrame", padding=(12, 12))
+        ttk.Label(card, text=title, style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(card, textvariable=value_var, style="CardValue.TLabel", wraplength=250, justify="left").pack(anchor="w", pady=(6, 0))
+        return card
+
+    def _style_dialog(self, dialog: tk.Toplevel) -> None:
+        dialog.configure(bg=self.colors["bg"])
+
+    def _style_listbox(self, widget: tk.Listbox) -> None:
+        widget.configure(
+            bg=self.colors["surface_alt"],
+            fg=self.colors["text"],
+            selectbackground=self.colors["accent"],
+            selectforeground=self.colors["bg"],
+            highlightbackground=self.colors["line"],
+            highlightcolor=self.colors["accent"],
+            highlightthickness=1,
+            relief="flat",
+            borderwidth=0,
+            activestyle="none",
+        )
+
+    def _style_text_widget(self, widget: tk.Text) -> None:
+        widget.configure(
+            bg=self.colors["surface_alt"],
+            fg=self.colors["text"],
+            insertbackground=self.colors["text"],
+            selectbackground=self.colors["accent"],
+            selectforeground=self.colors["bg"],
+            highlightbackground=self.colors["line"],
+            highlightcolor=self.colors["accent"],
+            highlightthickness=1,
+            relief="flat",
+            borderwidth=0,
+            padx=12,
+            pady=12,
+        )
+
     def _build_ui(self) -> None:
-        wrapper = ttk.Frame(self.root, padding=12)
+        wrapper = ttk.Frame(self.root, style="App.TFrame", padding=(18, 18, 18, 14))
         wrapper.pack(fill="both", expand=True)
+        wrapper.columnconfigure(0, weight=5)
+        wrapper.columnconfigure(1, weight=2)
+        wrapper.rowconfigure(2, weight=1)
 
-        toolbar = ttk.Frame(wrapper)
-        toolbar.pack(fill="x", pady=(0, 8))
+        hero = ttk.Frame(wrapper, style="Hero.TFrame", padding=(22, 18))
+        hero.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
+        hero.columnconfigure(0, weight=1)
 
-        self.open_button = ttk.Button(toolbar, text="이미지 열기", command=self.open_image)
+        ttk.Label(hero, text=APP_TITLE, style="HeroTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            hero,
+            text="A sharper desktop workflow for repeated crop layouts, batch exports, and OCR-ready asset prep.",
+            style="HeroBody.TLabel",
+            wraplength=840,
+            justify="left",
+        ).grid(row=1, column=0, sticky="w", pady=(6, 0))
+
+        hero_pills = ttk.Frame(hero, style="Hero.TFrame")
+        hero_pills.grid(row=0, column=1, rowspan=2, sticky="e")
+        ttk.Label(hero_pills, textvariable=self.mode_summary_var, style="Pill.TLabel").pack(side="left")
+        ttk.Label(hero_pills, textvariable=self.zoom_var, style="PillMuted.TLabel").pack(side="left", padx=(8, 0))
+
+        action_row = ttk.Frame(wrapper, style="App.TFrame")
+        action_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 14))
+        action_row.columnconfigure(0, weight=3)
+        action_row.columnconfigure(1, weight=4)
+        action_row.columnconfigure(2, weight=3)
+
+        source_row = self._create_button_group(action_row, "사진")
+        source_row.master.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        self.open_button = ttk.Button(source_row, text="사진 열기", command=self.open_image, style="Accent.TButton")
         self.open_button.pack(side="left")
-
-        self.paste_button = ttk.Button(toolbar, text="클립보드 붙여넣기", command=self.paste_clipboard_image)
+        self.paste_button = ttk.Button(source_row, text="사진 붙여넣기", command=self.paste_clipboard_image, style="Action.TButton")
         self.paste_button.pack(side="left", padx=(8, 0))
-
-        self.save_config_button = ttk.Button(toolbar, text="설정 저장", command=self.save_configuration)
+        self.save_config_button = ttk.Button(source_row, text="자르기 저장", command=self.save_configuration, style="Action.TButton")
         self.save_config_button.pack(side="left", padx=(8, 0))
-
-        self.load_config_button = ttk.Button(toolbar, text="설정 불러오기", command=self.load_configuration)
+        self.load_config_button = ttk.Button(source_row, text="자르기 불러오기", command=self.load_configuration, style="Action.TButton")
         self.load_config_button.pack(side="left", padx=(8, 0))
 
-        self.batch_button = ttk.Button(toolbar, text="배치 처리", command=self.open_batch_process_dialog)
-        self.batch_button.pack(side="left", padx=(16, 0))
-        self.retry_batch_button = ttk.Button(toolbar, text="실패 재시도", command=self.retry_failed_batch_jobs)
+        process_row = self._create_button_group(action_row, "작업")
+        process_row.master.grid(row=0, column=1, sticky="nsew", padx=(0, 10))
+        self.batch_button = ttk.Button(process_row, text="여러 장 자르기", command=self.open_batch_process_dialog, style="Action.TButton")
+        self.batch_button.pack(side="left")
+        self.retry_batch_button = ttk.Button(process_row, text="실패 다시", command=self.retry_failed_batch_jobs, style="Action.TButton")
         self.retry_batch_button.pack(side="left", padx=(8, 0))
-
-        self.history_button = ttk.Button(toolbar, text="이력 뷰어", command=self.open_history_viewer)
+        self.history_button = ttk.Button(process_row, text="기록 보기", command=self.open_history_viewer, style="Action.TButton")
         self.history_button.pack(side="left", padx=(8, 0))
-
-        self.ocr_button = ttk.Button(toolbar, text="OCR (C++/TRT)", command=self.run_cpp_ocr)
+        self.ocr_button = ttk.Button(process_row, text="글자 읽기", command=self.run_cpp_ocr, style="Action.TButton")
         self.ocr_button.pack(side="left", padx=(8, 0))
-        self.import_model_button = ttk.Button(toolbar, text="모델 가져오기", command=self.import_ocr_model_package)
+        self.import_model_button = ttk.Button(process_row, text="글자 모델 넣기", command=self.import_ocr_model_package, style="Action.TButton")
         self.import_model_button.pack(side="left", padx=(8, 0))
 
-        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=12)
-
-        self.zoom_out_button = ttk.Button(toolbar, text="축소", command=lambda: self.zoom_by(1 / ZOOM_STEP))
+        view_row = self._create_button_group(action_row, "화면")
+        view_row.master.grid(row=0, column=2, sticky="nsew")
+        self.zoom_out_button = ttk.Button(view_row, text="-", command=lambda: self.zoom_by(1 / ZOOM_STEP), style="Action.TButton")
         self.zoom_out_button.pack(side="left")
-
-        self.zoom_in_button = ttk.Button(toolbar, text="확대", command=lambda: self.zoom_by(ZOOM_STEP))
+        self.zoom_in_button = ttk.Button(view_row, text="+", command=lambda: self.zoom_by(ZOOM_STEP), style="Action.TButton")
         self.zoom_in_button.pack(side="left", padx=(8, 0))
-
-        self.zoom_reset_button = ttk.Button(toolbar, text="100%", command=self.reset_zoom)
+        self.zoom_reset_button = ttk.Button(view_row, text="100%", command=self.reset_zoom, style="Action.TButton")
         self.zoom_reset_button.pack(side="left", padx=(8, 0))
-
-        self.zoom_fit_button = ttk.Button(toolbar, text="맞춤", command=self.fit_to_view)
+        self.zoom_fit_button = ttk.Button(view_row, text="화면 맞춤", command=self.fit_to_view, style="Action.TButton")
         self.zoom_fit_button.pack(side="left", padx=(8, 0))
-
-        ttk.Label(toolbar, textvariable=self.zoom_var, width=8, anchor="center").pack(side="left", padx=(8, 0))
-
-        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=12)
-
-        self.delete_button = ttk.Button(toolbar, text="선택 삭제", command=self.delete_selected_rectangle)
+        ttk.Separator(view_row, orient="vertical").pack(side="left", fill="y", padx=10)
+        self.delete_button = ttk.Button(view_row, text="영역 지우기", command=self.delete_selected_rectangle, style="Action.TButton")
         self.delete_button.pack(side="left")
-
-        self.clear_button = ttk.Button(toolbar, text="전체 초기화", command=self.clear_rectangles)
+        self.clear_button = ttk.Button(view_row, text="전부 지우기", command=self.clear_rectangles, style="Action.TButton")
         self.clear_button.pack(side="left", padx=(8, 0))
-
-        self.grid_button = ttk.Button(toolbar, text="그리드 생성", command=self.open_grid_generator_dialog)
+        self.grid_button = ttk.Button(view_row, text="칸 나누기", command=self.open_grid_generator_dialog, style="Action.TButton")
         self.grid_button.pack(side="left", padx=(8, 0))
-
-        self.configure_button = ttk.Button(toolbar, text="설정", command=self.apply_settings)
+        self.configure_button = ttk.Button(view_row, text="자르기 확정", command=self.apply_settings, style="Action.TButton")
         self.configure_button.pack(side="left", padx=(8, 0))
 
-        self.split_button = ttk.Button(toolbar, text="분할 시작", command=self.split_image)
-        self.split_button.pack(side="left", padx=(8, 0))
+        canvas_shell = ttk.Frame(wrapper, style="Surface.TFrame", padding=(14, 14, 14, 14))
+        canvas_shell.grid(row=2, column=0, sticky="nsew", padx=(0, 14))
+        canvas_shell.columnconfigure(0, weight=1)
+        canvas_shell.rowconfigure(2, weight=1)
 
-        output_frame = ttk.Frame(wrapper)
-        output_frame.pack(fill="x", pady=(0, 8))
+        canvas_header = ttk.Frame(canvas_shell, style="Surface.TFrame")
+        canvas_header.grid(row=0, column=0, sticky="ew")
+        canvas_header.columnconfigure(0, weight=1)
+        ttk.Label(canvas_header, textvariable=self.image_summary_var, style="PanelTitle.TLabel", justify="left").grid(row=0, column=0, sticky="w")
+        ttk.Label(canvas_header, textvariable=self.selection_summary_var, style="PillMuted.TLabel").grid(row=0, column=1, sticky="e")
 
-        ttk.Label(output_frame, text="저장 폴더").pack(side="left")
-        self.output_dir_button = ttk.Button(output_frame, text="폴더 선택", command=self.choose_output_directory)
-        self.output_dir_button.pack(side="left", padx=(8, 0))
+        instruction_label = ttk.Label(canvas_shell, textvariable=self.instruction_var, style="Hint.TLabel", wraplength=980, justify="left")
+        instruction_label.grid(row=1, column=0, sticky="ew", pady=(10, 12))
 
-        self.set_cwd_button = ttk.Button(output_frame, text="현재 폴더로 지정", command=self.set_output_to_cwd)
-        self.set_cwd_button.pack(side="left", padx=(8, 0))
-        ttk.Label(output_frame, textvariable=self.output_dir_var).pack(side="left", padx=(12, 0))
-
-        instruction_label = ttk.Label(wrapper, textvariable=self.instruction_var, wraplength=1320)
-        instruction_label.pack(fill="x", pady=(0, 10))
-
-        canvas_frame = ttk.Frame(wrapper)
-        canvas_frame.pack(fill="both", expand=True)
+        canvas_frame = ttk.Frame(canvas_shell, style="Surface.TFrame")
+        canvas_frame.grid(row=2, column=0, sticky="nsew")
         canvas_frame.columnconfigure(0, weight=1)
         canvas_frame.rowconfigure(0, weight=1)
 
-        self.canvas = tk.Canvas(canvas_frame, background="#111827", highlightthickness=0)
+        self.canvas = tk.Canvas(
+            canvas_frame,
+            background=self.colors["canvas"],
+            highlightthickness=1,
+            highlightbackground=self.colors["line"],
+            highlightcolor=self.colors["accent"],
+            relief="flat",
+            bd=0,
+        )
         self.canvas.grid(row=0, column=0, sticky="nsew")
 
         y_scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=self.canvas.yview)
         y_scrollbar.grid(row=0, column=1, sticky="ns")
-
         x_scrollbar = ttk.Scrollbar(canvas_frame, orient="horizontal", command=self.canvas.xview)
         x_scrollbar.grid(row=1, column=0, sticky="ew")
-
         self.canvas.configure(xscrollcommand=x_scrollbar.set, yscrollcommand=y_scrollbar.set)
 
-        status_bar = ttk.Label(
-            wrapper,
-            textvariable=self.status_var,
-            anchor="w",
-            relief="sunken",
-            padding=(8, 6),
-        )
-        status_bar.pack(fill="x", pady=(10, 0))
+        sidebar = ttk.Frame(wrapper, style="Panel.TFrame", padding=(14, 14, 14, 14))
+        sidebar.grid(row=2, column=1, sticky="nsew")
+        sidebar.columnconfigure(0, weight=1)
+
+        image_card = self._create_info_card(sidebar, "Current Image", self.image_summary_var)
+        image_card.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        selection_card = self._create_info_card(sidebar, "Selection State", self.selection_summary_var)
+        selection_card.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+
+        output_card = ttk.Frame(sidebar, style="Card.TFrame", padding=(12, 12))
+        output_card.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        output_card.columnconfigure(0, weight=1)
+        ttk.Label(output_card, text="Output Folder", style="CardTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(output_card, textvariable=self.output_dir_var, style="CardValue.TLabel", wraplength=250, justify="left").grid(row=1, column=0, sticky="w", pady=(6, 10))
+        action_bar = ttk.Frame(output_card, style="Card.TFrame")
+        action_bar.grid(row=2, column=0, sticky="ew")
+        self.output_dir_button = ttk.Button(action_bar, text="저장 폴더", command=self.choose_output_directory, style="Action.TButton")
+        self.output_dir_button.pack(side="left")
+        self.set_cwd_button = ttk.Button(action_bar, text="현재 폴더", command=self.set_output_to_cwd, style="Action.TButton")
+        self.set_cwd_button.pack(side="left", padx=(8, 0))
+
+        focus_card = ttk.Frame(sidebar, style="Card.TFrame", padding=(12, 12))
+        focus_card.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        ttk.Label(focus_card, text="Workflow Focus", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(focus_card, textvariable=self.workspace_summary_var, style="SidebarValue.TLabel", wraplength=250, justify="left").pack(anchor="w", pady=(6, 0))
+        ttk.Label(
+            focus_card,
+            text="Shortcuts: Ctrl+V paste, Ctrl+wheel zoom, Shift locks a square, Delete removes selection.",
+            style="SidebarHint.TLabel",
+            wraplength=250,
+            justify="left",
+        ).pack(anchor="w", pady=(10, 0))
+
+        self.split_button = ttk.Button(sidebar, text="잘라서 저장", command=self.split_image, style="Accent.TButton")
+        self.split_button.grid(row=4, column=0, sticky="ew", pady=(4, 0))
+
+        status_bar = ttk.Label(wrapper, textvariable=self.status_var, style="Status.TLabel", anchor="w", justify="left")
+        status_bar.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(14, 0))
 
     def _bind_events(self) -> None:
         self.canvas.bind("<Motion>", self.on_motion)
@@ -260,12 +437,20 @@ class AutoCropApp:
     def _show_placeholder(self) -> None:
         self.canvas.delete("all")
         self.canvas_image_id = None
+        self.canvas.create_rectangle(140, 120, 900, 560, outline=self.colors["line"], width=2, dash=(8, 8))
         self.canvas.create_text(
             520,
-            340,
-            text="이미지를 열거나 Ctrl+V로 붙여넣으면 여기에 표시됩니다.",
-            fill="#d1d5db",
-            font=("Malgun Gothic", 20, "bold"),
+            300,
+            text="Load an image or paste from clipboard",
+            fill=self.colors["text"],
+            font=("Bahnschrift SemiBold", 24),
+        )
+        self.canvas.create_text(
+            520,
+            352,
+            text="Then sketch crop regions directly on the canvas and export them in one pass.",
+            fill=self.colors["muted"],
+            font=("Segoe UI", 12),
         )
         self.canvas.configure(scrollregion=(0, 0, 1040, 700))
 
@@ -302,9 +487,31 @@ class AutoCropApp:
         self.set_cwd_button.configure(state="normal")
         self.split_button.configure(state=split_state)
 
+        if self.loaded_image is None:
+            self.image_summary_var.set("No image loaded")
+            self.selection_summary_var.set("0 regions")
+            self.mode_summary_var.set("Waiting for image")
+        else:
+            self.image_summary_var.set(f"{self.loaded_image.display_name}\n{self.loaded_image.width} x {self.loaded_image.height}")
+            selection_state = "confirmed" if self.is_configured and has_rectangles else "draft" if has_rectangles else "empty"
+            self.selection_summary_var.set(f"{len(self.rectangles)} regions | {selection_state}")
+            if split_state == "normal":
+                self.mode_summary_var.set("Ready to export")
+            elif has_rectangles:
+                self.mode_summary_var.set("Layout in progress")
+            else:
+                self.mode_summary_var.set("Image loaded")
+
+        if has_output_dir:
+            self.workspace_summary_var.set("Exports are unlocked. You can batch, OCR, or save crops from this workspace.")
+        elif has_image:
+            self.workspace_summary_var.set("Pick an output folder to unlock crop export and batch output.")
+        else:
+            self.workspace_summary_var.set("Select an output folder to unlock export.")
+
     def open_image(self) -> None:
         path = filedialog.askopenfilename(
-            title="분할할 이미지를 선택하세요",
+            title="Select an image to crop",
             filetypes=SUPPORTED_FILE_TYPES,
         )
         if not path:
@@ -315,25 +522,25 @@ class AutoCropApp:
     def paste_clipboard_image(self, _event: tk.Event | None = None) -> str | None:
         if ImageGrab is None:
             detail = f"\n{IMAGEGRAB_IMPORT_ERROR}" if IMAGEGRAB_IMPORT_ERROR else ""
-            messagebox.showerror("붙여넣기 실패", f"현재 환경에서는 클립보드 이미지를 읽을 수 없습니다.{detail}")
+            messagebox.showerror("Paste Failed", f"Clipboard images are not available in this environment.{detail}")
             return "break"
 
         try:
             clipboard_content = ImageGrab.grabclipboard()
         except Exception as exc:  # pragma: no cover - tkinter dialog flow
-            messagebox.showerror("붙여넣기 실패", f"클립보드 이미지를 가져올 수 없습니다.\n{exc}")
+            messagebox.showerror("Paste Failed", f"Could not read the clipboard image.\n{exc}")
             return "break"
 
         if isinstance(clipboard_content, list):
             image_path = self._find_first_supported_image_path(clipboard_content)
             if image_path is None:
-                messagebox.showwarning("붙여넣기 실패", "클립보드에 이미지 데이터가 없거나 지원하지 않는 형식입니다.")
+                messagebox.showwarning("Paste Failed", "The clipboard does not contain a supported image.")
                 return "break"
             self._load_image_from_path(image_path)
             return "break"
 
         if clipboard_content is None or not isinstance(clipboard_content, Image.Image):
-            messagebox.showwarning("붙여넣기 실패", "클립보드에 이미지가 없습니다. 먼저 화면 캡처나 이미지 복사를 해주세요.")
+            messagebox.showwarning("Paste Failed", "No image is available in the clipboard.")
             return "break"
 
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -348,7 +555,7 @@ class AutoCropApp:
             source_kind="clipboard",
             source_path=None,
         )
-        self.status_var.set(f"클립보드 이미지를 불러왔습니다: {copied_image.width} x {copied_image.height}")
+        self.status_var.set(f"Clipboard image loaded: {copied_image.width} x {copied_image.height}")
         return "break"
 
     def _load_image_from_path(self, image_path: Path) -> bool:
@@ -357,7 +564,7 @@ class AutoCropApp:
                 copied_image = source_image.copy()
                 format_name = source_image.format
         except Exception as exc:  # pragma: no cover - tkinter dialog flow
-            messagebox.showerror("열기 실패", f"이미지를 열 수 없습니다.\n{exc}")
+            messagebox.showerror("Open Failed", f"Could not open the image.\n{exc}")
             return False
 
         self._load_image(
@@ -368,9 +575,7 @@ class AutoCropApp:
             source_kind="file",
             source_path=image_path,
         )
-        self.status_var.set(
-            f"불러온 이미지: {image_path.name} ({copied_image.width} x {copied_image.height})"
-        )
+        self.status_var.set(f"Loaded image: {image_path.name} ({copied_image.width} x {copied_image.height})")
         return True
 
     def _load_image(
@@ -422,7 +627,7 @@ class AutoCropApp:
             initial_dir = Path.cwd()
 
         selected_dir = filedialog.askdirectory(
-            title="저장 폴더를 선택하세요",
+            title="Choose an output folder",
             initialdir=str(initial_dir),
             mustexist=True,
         )
@@ -430,21 +635,21 @@ class AutoCropApp:
             return
 
         self._set_output_dir(Path(selected_dir), user_selected=True)
-        self.status_var.set(f"저장 폴더를 설정했습니다: {selected_dir}")
+        self.status_var.set(f"Output folder set: {selected_dir}")
 
     def set_output_to_cwd(self) -> None:
         """Set the output directory to the current working directory."""
         cwd = Path.cwd()
         self._set_output_dir(cwd, user_selected=True)
-        self.status_var.set(f"저장 폴더를 현재 작업 폴더로 설정했습니다: {cwd}")
+        self.status_var.set(f"Output folder set to workspace: {cwd}")
 
     def _set_output_dir(self, path: Path | None, user_selected: bool = False) -> None:
         self.output_dir = path
         self.output_dir_is_user_selected = user_selected
         if self.output_dir is None:
-            self.output_dir_var.set("저장 폴더: 선택되지 않음")
+            self.output_dir_var.set("Not selected")
         else:
-            self.output_dir_var.set(f"저장 폴더: {self.output_dir}")
+            self.output_dir_var.set(str(self.output_dir))
         self._update_controls()
 
     def save_configuration(self) -> None:
@@ -453,7 +658,7 @@ class AutoCropApp:
 
         initial_path = self._get_default_config_path()
         target = filedialog.asksaveasfilename(
-            title="설정 저장",
+            title="Save layout",
             initialdir=str(initial_path.parent),
             initialfile=initial_path.name,
             defaultextension=".json",
@@ -480,20 +685,20 @@ class AutoCropApp:
         try:
             Path(target).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as exc:  # pragma: no cover - tkinter dialog flow
-            messagebox.showerror("저장 실패", f"설정 파일을 저장할 수 없습니다.\n{exc}")
+            messagebox.showerror("Save Failed", f"Could not save the layout file.\n{exc}")
             return
 
-        self.status_var.set(f"설정 파일을 저장했습니다: {Path(target).name}")
+        self.status_var.set(f"Layout saved: {Path(target).name}")
 
     def load_configuration(self) -> None:
-        config_path = filedialog.askopenfilename(title="설정 불러오기", filetypes=CONFIG_FILE_TYPES)
+        config_path = filedialog.askopenfilename(title="Load layout", filetypes=CONFIG_FILE_TYPES)
         if not config_path:
             return
 
         try:
             data = json.loads(Path(config_path).read_text(encoding="utf-8"))
         except Exception as exc:  # pragma: no cover - tkinter dialog flow
-            messagebox.showerror("불러오기 실패", f"설정 파일을 읽을 수 없습니다.\n{exc}")
+            messagebox.showerror("Load Failed", f"Could not read the layout file.\n{exc}")
             return
 
         saved_image_path = Path(data.get("image_path", "")) if data.get("image_path") else None
@@ -505,12 +710,12 @@ class AutoCropApp:
                     return
         elif not self.loaded_image:
             missing_source_message = (
-                "설정 파일의 원본 이미지를 찾을 수 없습니다. 먼저 클립보드 이미지를 다시 붙여넣은 뒤 시도하세요."
+                "The layout expects a clipboard image. Paste the source image again and retry."
                 if saved_image_source_kind == "clipboard"
-                else "설정 파일의 원본 이미지를 찾을 수 없습니다. 먼저 이미지를 연 뒤 다시 시도하세요."
+                else "The layout references a source image that could not be found. Open the image first and retry."
             )
             messagebox.showerror(
-                "불러오기 실패",
+                "Load Failed",
                 missing_source_message,
             )
             return
@@ -546,8 +751,8 @@ class AutoCropApp:
 
         if saved_width != self.loaded_image.width or saved_height != self.loaded_image.height:
             messagebox.showwarning(
-                "크기 보정",
-                "설정 파일의 이미지 크기와 현재 이미지 크기가 달라 비율에 맞춰 좌표를 보정했습니다.",
+                "Layout Scaled",
+                "The source image size differs from the saved layout, so the crop coordinates were scaled to fit.",
             )
 
         saved_output_dir = Path(data.get("output_dir", "")) if data.get("output_dir") else None
@@ -557,11 +762,11 @@ class AutoCropApp:
             else:
                 self._set_output_dir(None)
                 messagebox.showwarning(
-                    "저장 폴더 확인 필요",
-                    "설정 파일에 저장된 폴더가 존재하지 않습니다. 저장 폴더를 다시 선택하세요.",
+                    "Output Folder Missing",
+                    "The saved output folder no longer exists. Choose a new output folder.",
                 )
 
-        self.status_var.set(f"설정 파일을 불러왔습니다: {Path(config_path).name}")
+        self.status_var.set(f"Layout loaded: {Path(config_path).name}")
         self._update_controls()
 
     def _get_default_config_path(self) -> Path:
@@ -575,11 +780,12 @@ class AutoCropApp:
 
     def open_batch_process_dialog(self) -> None:
         dialog = tk.Toplevel(self.root)
-        dialog.title("다중 파일 배치 처리")
+        dialog.title("여러 장 자르기")
         dialog.geometry("800x600")
         dialog.minsize(640, 480)
         dialog.transient(self.root)
         dialog.grab_set()
+        self._style_dialog(dialog)
 
         # --- Variables ---
         config_source_var = tk.StringVar(value="current")
@@ -607,6 +813,7 @@ class AutoCropApp:
 
         file_listbox = tk.Listbox(listbox_frame, selectmode="extended")
         file_listbox.grid(row=0, column=0, sticky="nsew")
+        self._style_listbox(file_listbox)
 
         list_yscroll = ttk.Scrollbar(listbox_frame, orient="vertical", command=file_listbox.yview)
         list_yscroll.grid(row=0, column=1, sticky="ns")
@@ -670,10 +877,10 @@ class AutoCropApp:
         file_buttons_frame = ttk.Frame(files_frame)
         file_buttons_frame.grid(row=0, column=1, sticky="n", padx=(10, 0))
 
-        ttk.Button(file_buttons_frame, text="파일 추가", command=add_files).pack(fill="x", pady=2)
-        ttk.Button(file_buttons_frame, text="폴더 추가", command=add_folder).pack(fill="x", pady=2)
-        ttk.Button(file_buttons_frame, text="선택 삭제", command=remove_selected).pack(fill="x", pady=(10, 2))
-        ttk.Button(file_buttons_frame, text="전체 삭제", command=clear_all).pack(fill="x", pady=2)
+        ttk.Button(file_buttons_frame, text="사진 넣기", command=add_files).pack(fill="x", pady=2)
+        ttk.Button(file_buttons_frame, text="폴더 넣기", command=add_folder).pack(fill="x", pady=2)
+        ttk.Button(file_buttons_frame, text="선택 빼기", command=remove_selected).pack(fill="x", pady=(10, 2))
+        ttk.Button(file_buttons_frame, text="전부 비우기", command=clear_all).pack(fill="x", pady=2)
 
         # --- Config Frame ---
         config_frame = ttk.LabelFrame(main_frame, text="적용할 분할 규칙", padding=10)
@@ -706,7 +913,7 @@ class AutoCropApp:
         json_settings_radio.grid(row=1, column=0, sticky="w", pady=(5, 0))
         json_path_entry = ttk.Entry(config_frame, textvariable=json_path_var, state="disabled")
         json_path_entry.grid(row=1, column=1, sticky="ew", padx=(5, 5), pady=(5, 0))
-        json_browse_button = ttk.Button(config_frame, text="찾아보기...", command=browse_json, state="disabled")
+        json_browse_button = ttk.Button(config_frame, text="파일 찾기", command=browse_json, state="disabled")
         json_browse_button.grid(row=1, column=2, sticky="w", pady=(5, 0))
         toggle_json_input()
 
@@ -722,7 +929,7 @@ class AutoCropApp:
 
         ttk.Label(output_frame, textvariable=batch_output_dir_var).grid(row=0, column=0, sticky="ew", padx=(0, 5))
         batch_output_dir_var.set(str(self.output_dir) if self.output_dir else "폴더를 선택하세요...")
-        ttk.Button(output_frame, text="폴더 선택", command=choose_batch_output_dir).grid(row=0, column=1, sticky="e")
+        ttk.Button(output_frame, text="폴더 고르기", command=choose_batch_output_dir).grid(row=0, column=1, sticky="e")
 
         subfolder_checkbox = ttk.Checkbutton(
             output_frame,
@@ -827,9 +1034,9 @@ class AutoCropApp:
             )
             thread.start()
 
-        start_button = ttk.Button(action_buttons_frame, text="배치 작업 시작", command=start_batch_processing)
+        start_button = ttk.Button(action_buttons_frame, text="여러 장 저장", command=start_batch_processing)
         start_button.pack(side="left", padx=5)
-        close_button = ttk.Button(action_buttons_frame, text="닫기", command=dialog.destroy)
+        close_button = ttk.Button(action_buttons_frame, text="창 닫기", command=dialog.destroy)
         close_button.pack(side="left", padx=5)
 
         dialog.wait_window()
@@ -992,7 +1199,7 @@ class AutoCropApp:
                     "origin": self.rectangles[self.selected_rectangle_index].normalized(),
                     "shift_pressed": (event.state & SHIFT_MASK) != 0,
                 }
-                self.status_var.set("사각형 크기를 조절하는 중입니다.")
+                self.status_var.set("Resizing the selected crop region.")
                 self._update_controls()
                 return
 
@@ -1008,7 +1215,7 @@ class AutoCropApp:
                 "start_y": y,
                 "origin": rectangle,
             }
-            self.status_var.set("선택한 사각형을 이동하는 중입니다.")
+            self.status_var.set("Moving the selected crop region.")
         else:
             self.rectangles.append(CropRectangle(x, y, x, y))
             self.selected_rectangle_index = len(self.rectangles) - 1
@@ -1018,7 +1225,7 @@ class AutoCropApp:
                 "shift_pressed": (event.state & SHIFT_MASK) != 0,
             }
             self.is_configured = False
-            self.status_var.set("새 사각형을 만드는 중입니다. 드래그를 놓으면 영역이 확정됩니다.")
+            self.status_var.set("Drawing a new crop region. Release the mouse to place it.")
 
         self._refresh_overlays()
         self._update_controls()
@@ -1079,10 +1286,10 @@ class AutoCropApp:
         if normalized is None:
             del self.rectangles[self.selected_rectangle_index]
             self.selected_rectangle_index = None
-            self.status_var.set("너무 작은 사각형은 자동으로 제거했습니다.")
+            self.status_var.set("Very small crop regions are removed automatically.")
         else:
             self.rectangles[self.selected_rectangle_index] = normalized
-            self.status_var.set("사각형을 조정했습니다. 계속 수정하거나 '설정'을 누르세요.")
+            self.status_var.set("Crop region updated. Keep editing or confirm the layout.")
 
         self.drag_context = None
         self._refresh_overlays()
@@ -1133,7 +1340,7 @@ class AutoCropApp:
         self.is_configured = False
         self._refresh_overlays()
         self._update_controls()
-        self.status_var.set("선택한 사각형을 삭제했습니다.")
+        self.status_var.set("Selected crop region deleted.")
 
     def clear_rectangles(self) -> None:
         if not self.loaded_image:
@@ -1145,34 +1352,35 @@ class AutoCropApp:
         self.is_configured = False
         self._refresh_overlays()
         self._update_controls()
-        self.status_var.set("모든 사각형을 초기화했습니다.")
+        self.status_var.set("All crop regions cleared.")
 
     def open_grid_generator_dialog(self) -> None:
         if not self.loaded_image:
             return
 
         dialog = tk.Toplevel(self.root)
-        dialog.title("그리드 생성")
+        dialog.title("칸 나누기")
         dialog.geometry("320x200")
         dialog.resizable(False, False)
         dialog.transient(self.root)
         dialog.grab_set()
+        self._style_dialog(dialog)
 
         frame = ttk.Frame(dialog, padding=15)
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(1, weight=1)
 
-        ttk.Label(frame, text="행 (Rows):").grid(row=0, column=0, sticky="w", pady=5)
+        ttk.Label(frame, text="Rows").grid(row=0, column=0, sticky="w", pady=5)
         rows_var = tk.StringVar(value="2")
         rows_entry = ttk.Entry(frame, textvariable=rows_var, width=10)
         rows_entry.grid(row=0, column=1, sticky="ew", padx=(10, 0))
 
-        ttk.Label(frame, text="열 (Columns):").grid(row=1, column=0, sticky="w", pady=5)
+        ttk.Label(frame, text="Columns").grid(row=1, column=0, sticky="w", pady=5)
         cols_var = tk.StringVar(value="2")
         cols_entry = ttk.Entry(frame, textvariable=cols_var, width=10)
         cols_entry.grid(row=1, column=1, sticky="ew", padx=(10, 0))
 
-        ttk.Label(frame, text="간격 (Padding, px):").grid(row=2, column=0, sticky="w", pady=5)
+        ttk.Label(frame, text="Padding (px)").grid(row=2, column=0, sticky="w", pady=5)
         padding_var = tk.StringVar(value="0")
         padding_entry = ttk.Entry(frame, textvariable=padding_var, width=10)
         padding_entry.grid(row=2, column=1, sticky="ew", padx=(10, 0))
@@ -1188,16 +1396,16 @@ class AutoCropApp:
                 if rows <= 0 or cols <= 0 or padding < 0:
                     raise ValueError("Values must be positive.")
             except ValueError:
-                messagebox.showerror("입력 오류", "행, 열, 간격에 유효한 양의 정수를 입력하세요.", parent=dialog)
+                messagebox.showerror("Input Error", "Enter valid positive integers for rows, columns, and padding.", parent=dialog)
                 return
 
             self.generate_grid_rectangles(rows, cols, padding)
             dialog.destroy()
 
-        generate_button = ttk.Button(button_frame, text="생성", command=on_generate)
+        generate_button = ttk.Button(button_frame, text="칸 만들기", command=on_generate)
         generate_button.pack(side="left", padx=5)
 
-        cancel_button = ttk.Button(button_frame, text="취소", command=dialog.destroy)
+        cancel_button = ttk.Button(button_frame, text="닫기", command=dialog.destroy)
         cancel_button.pack(side="left", padx=5)
 
         dialog.wait_window()
@@ -1209,12 +1417,12 @@ class AutoCropApp:
         img_width, img_height = self.loaded_image.width, self.loaded_image.height
         total_padding_x, total_padding_y = padding * (cols + 1), padding * (rows + 1)
         if total_padding_x >= img_width or total_padding_y >= img_height:
-            messagebox.showerror("오류", "간격의 총합이 이미지 크기보다 큽니다.")
+            messagebox.showerror("Grid Error", "The total padding is larger than the image dimensions.")
             return
 
         cell_width, cell_height = (img_width - total_padding_x) / cols, (img_height - total_padding_y) / rows
         if cell_width < 1 or cell_height < 1:
-            messagebox.showerror("오류", "셀 크기가 1px 미만이 될 수 없습니다. 행/열 또는 간격을 줄여주세요.")
+            messagebox.showerror("Grid Error", "Cell size would fall below 1px. Reduce rows, columns, or padding.")
             return
 
         self.rectangles = []
@@ -1235,7 +1443,7 @@ class AutoCropApp:
 
         self._refresh_overlays()
         self._update_controls()
-        self.status_var.set(f"{rows}x{cols} 그리드를 생성했습니다. 총 {len(self.rectangles)}개 사각형.")
+        self.status_var.set(f"Generated a {rows} x {cols} grid with {len(self.rectangles)} crop regions.")
 
     def apply_settings(self) -> None:
         if not self.loaded_image:
@@ -1249,16 +1457,16 @@ class AutoCropApp:
         self._update_controls()
 
         if self.rectangles:
-            self.status_var.set(f"설정 완료: 저장할 사각형 {len(self.rectangles)}개를 확정했습니다.")
+            self.status_var.set(f"Layout confirmed with {len(self.rectangles)} crop regions.")
         else:
-            self.status_var.set("설정할 사각형이 없습니다. 드래그로 영역을 먼저 추가하세요.")
+            self.status_var.set("No crop regions are available to confirm yet.")
 
     def split_image(self) -> None:
         if not self.loaded_image or not self.is_configured or not self.rectangles:
             return
 
         if self.output_dir is None or not self.output_dir.is_dir():
-            messagebox.showerror("저장 실패", "분할 이미지를 저장할 폴더를 먼저 선택하세요.")
+            messagebox.showerror("Export Failed", "Choose an output folder before exporting crops.")
             return
 
         output_dir = self.output_dir
@@ -1275,7 +1483,7 @@ class AutoCropApp:
                 self._save_cropped_image(cropped, target_path)
                 saved_paths.append(target_path)
         except Exception as exc:  # pragma: no cover - tkinter dialog flow
-            messagebox.showerror("저장 실패", f"분할 저장 중 오류가 발생했습니다.\n{exc}")
+            messagebox.showerror("Export Failed", f"An error occurred while exporting crops.\n{exc}")
             return
 
         self._append_history_entry(
@@ -1285,10 +1493,10 @@ class AutoCropApp:
             saved_paths=saved_paths,
             rectangles_count=len(self.rectangles),
         )
-        self.status_var.set(f"{len(saved_paths)}개 조각을 저장했습니다. 저장 위치: {output_dir}")
+        self.status_var.set(f"Exported {len(saved_paths)} crops to {output_dir}")
         messagebox.showinfo(
-            "분할 완료",
-            f"{len(saved_paths)}개 파일을 저장했습니다.\n\n저장 위치:\n{output_dir}",
+            "Export Complete",
+            f"Saved {len(saved_paths)} cropped files.\n\nOutput:\n{output_dir}",
         )
 
     def _perform_batch_job(
@@ -1333,7 +1541,7 @@ class AutoCropApp:
                     rects_to_apply = self._normalize_rectangles_collection(scaled_rects)
 
                 if not rects_to_apply:
-                    raise ValueError("크기 보정 후 유효한 사각형이 없습니다.")
+                    raise ValueError("No valid crop regions remain after scaling.")
 
                 stem = image_path.stem
                 suffix = self._get_batch_output_suffix(image_path)
@@ -1377,25 +1585,25 @@ class AutoCropApp:
                     saved_paths=saved_paths,
                     rectangles_count=len(crop_rects),
                 )
-            message = f"배치 처리가 완료되었습니다.\n\n총 {total_files}개 파일 처리 시도\n성공적으로 저장된 조각: {saved_count}개"
+            message = f"Batch processing finished.\n\nFiles attempted: {total_files}\nCrops saved: {saved_count}"
             if error_count > 0:
-                message += f"\n오류 발생: {error_count}개 파일"
-                message += "\n(툴바의 '실패 재시도' 버튼으로 실패 파일만 다시 실행할 수 있습니다.)"
+                message += f"\nFiles with errors: {error_count}"
+                message += "\nUse 'Retry Failed' in the toolbar to rerun only the failed files."
                 if errors and len(errors) < 5:
-                    message += "\n\n오류 상세:\n" + "\n".join(errors)
-            messagebox.showinfo("완료", message, parent=dialog)
+                    message += "\n\nError details:\n" + "\n".join(errors)
+            messagebox.showinfo("Batch Complete", message, parent=dialog)
             dialog.destroy()
 
         dialog.after(0, show_final_message)
 
     def retry_failed_batch_jobs(self) -> None:
         if not self.last_batch_context or not self.last_batch_failures:
-            messagebox.showinfo("실패 재시도", "재시도할 배치 실패 이력이 없습니다.")
+            messagebox.showinfo("Retry Failed", "There are no failed batch items to retry.")
             return
 
         valid_failures = [path for path in self.last_batch_failures if path.exists() and path.is_file()]
         if not valid_failures:
-            messagebox.showwarning("실패 재시도", "이전 실패 파일을 찾을 수 없습니다.")
+            messagebox.showwarning("Retry Failed", "The previously failed files can no longer be found.")
             self.last_batch_failures = []
             self._update_controls()
             return
@@ -1403,13 +1611,13 @@ class AutoCropApp:
         output_dir_raw = self.last_batch_context.get("output_dir")
         output_dir = output_dir_raw if isinstance(output_dir_raw, Path) else None
         if output_dir is None or not output_dir.exists():
-            messagebox.showerror("실패 재시도", "이전 배치의 출력 폴더를 찾을 수 없습니다.")
+            messagebox.showerror("Retry Failed", "The previous batch output folder could not be found.")
             return
 
         crop_rects_raw = self.last_batch_context.get("crop_rects", [])
         crop_rects = crop_rects_raw if isinstance(crop_rects_raw, list) else []
         if not crop_rects:
-            messagebox.showerror("실패 재시도", "이전 배치의 분할 규칙이 없어 재시도를 진행할 수 없습니다.")
+            messagebox.showerror("Retry Failed", "The previous batch crop layout is missing.")
             return
 
         source_image_size_raw = self.last_batch_context.get("source_image_size")
@@ -1418,17 +1626,18 @@ class AutoCropApp:
         create_subfolders = bool(create_subfolders_raw)
 
         retry_dialog = tk.Toplevel(self.root)
-        retry_dialog.title("배치 실패 재시도")
+        retry_dialog.title("실패한 사진 다시")
         retry_dialog.geometry("520x160")
         retry_dialog.transient(self.root)
         retry_dialog.grab_set()
+        self._style_dialog(retry_dialog)
 
         frame = ttk.Frame(retry_dialog, padding=12)
         frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text=f"실패 파일 {len(valid_failures)}개를 재시도합니다.").pack(anchor="w", pady=(0, 8))
+        ttk.Label(frame, text=f"Retrying {len(valid_failures)} failed source files.").pack(anchor="w", pady=(0, 8))
         progress_bar = ttk.Progressbar(frame, orient="horizontal", mode="determinate")
         progress_bar.pack(fill="x", pady=(0, 8))
-        ttk.Label(frame, text="재시도 중...").pack(anchor="w")
+        ttk.Label(frame, text="Running...").pack(anchor="w")
 
         thread = threading.Thread(
             target=self._perform_batch_job,
@@ -1737,13 +1946,14 @@ class AutoCropApp:
     def open_history_viewer(self) -> None:
         entries = self._read_history_entries()
         if not entries:
-            messagebox.showinfo("이력 뷰어", "아직 저장 이력이 없습니다.")
+            messagebox.showinfo("History", "No saved job history is available yet.")
             return
 
         dialog = tk.Toplevel(self.root)
-        dialog.title("크롭 이력 뷰어")
+        dialog.title("Crop History")
         dialog.geometry("920x560")
         dialog.transient(self.root)
+        self._style_dialog(dialog)
 
         container = ttk.Frame(dialog, padding=12)
         container.pack(fill="both", expand=True)
@@ -1804,6 +2014,7 @@ class AutoCropApp:
         list_frame.columnconfigure(0, weight=1)
         listbox = Listbox(list_frame, exportselection=False)
         listbox.grid(row=0, column=0, sticky="nsew")
+        self._style_listbox(listbox)
         list_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=listbox.yview)
         list_scroll.grid(row=0, column=1, sticky="ns")
         listbox.configure(yscrollcommand=list_scroll.set)
@@ -1831,6 +2042,7 @@ class AutoCropApp:
 
         ocr_text = tk.Text(ocr_tab, wrap="word", state="disabled")
         ocr_text.grid(row=1, column=0, sticky="nsew")
+        self._style_text_widget(ocr_text)
 
         json_tab = ttk.Frame(notebook, padding=8)
         json_tab.columnconfigure(0, weight=1)
@@ -1838,6 +2050,7 @@ class AutoCropApp:
         notebook.add(json_tab, text="상세 JSON")
         detail_text = tk.Text(json_tab, wrap="word", state="disabled")
         detail_text.grid(row=0, column=0, sticky="nsew")
+        self._style_text_widget(detail_text)
 
         filtered_entries: list[dict[str, object]] = []
 
@@ -2152,7 +2365,8 @@ class AutoCropApp:
         for index, rectangle in enumerate(self.rectangles):
             rect = rectangle.normalized()
             selected = index == self.selected_rectangle_index
-            outline = "#ef4444" if selected else "#f59e0b"
+            outline = self.colors["accent"] if selected else self.colors["cool"]
+            fill = "#3b1f08" if selected else "#0d2731"
             width = 3 if selected else 2
             dash = None if selected else (8, 4)
 
@@ -2166,9 +2380,11 @@ class AutoCropApp:
                 top,
                 right,
                 bottom,
+                fill=fill,
                 outline=outline,
                 width=width,
                 dash=dash,
+                stipple="gray25",
                 tags=("overlay",),
             )
             self.canvas.create_text(
@@ -2186,8 +2402,8 @@ class AutoCropApp:
 
     def _draw_handles(self, rect: CropRectangle) -> None:
         handle_offset = HANDLE_SIZE / 2
-        fill = "#ef4444"
-        outline = "white"
+        fill = self.colors["accent"]
+        outline = self.colors["text"]
         tags = ("overlay", "handle")
 
         positions = self._get_handle_canvas_positions(rect)
