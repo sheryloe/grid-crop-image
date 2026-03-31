@@ -29,7 +29,7 @@ def build_schema(config: dict[str, object]) -> str:
                 "downloadUrl": str(config["repo_url"]),
                 "codeRepository": str(config["repo_url"]),
                 "description": str(config["description_en"]),
-                "softwareRequirements": "Python 3.11+, Pillow, Windows 10+",
+                "softwareRequirements": "Python 3.11+, Pillow, Windows 10 or 11",
                 "offers": {
                     "@type": "Offer",
                     "price": "0",
@@ -45,10 +45,10 @@ def build_schema(config: dict[str, object]) -> str:
                 "mainEntity": [
                     {
                         "@type": "Question",
-                        "name": "Grid Crop Image는 어떤 작업에 잘 맞나요?",
+                        "name": "Grid Crop Studio는 어떤 작업에 잘 맞나요?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": "스크린샷 분할, 블로그 자산 제작, 반복되는 다중 크롭 작업에 적합합니다.",
+                            "text": "스크린샷 자르기, 카드형 이미지 분할, 블로그 자산 제작, 반복되는 다중 자르기 작업에 적합합니다.",
                         },
                     },
                     {
@@ -56,7 +56,7 @@ def build_schema(config: dict[str, object]) -> str:
                         "name": "클립보드 이미지를 바로 붙여넣을 수 있나요?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": "가능합니다. Ctrl+V로 이미지를 바로 가져와 작업을 시작할 수 있습니다.",
+                            "text": "가능합니다. Ctrl+V로 사진을 바로 가져와 작업을 시작할 수 있습니다.",
                         },
                     },
                     {
@@ -64,7 +64,15 @@ def build_schema(config: dict[str, object]) -> str:
                         "name": "JSON 레이아웃을 다시 사용할 수 있나요?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": "가능합니다. 저장한 크롭 좌표와 설정을 다시 불러와 같은 작업을 반복할 수 있습니다.",
+                            "text": "가능합니다. 저장한 자르기 좌표와 설정을 다시 불러와 같은 작업을 반복할 수 있습니다.",
+                        },
+                    },
+                    {
+                        "@type": "Question",
+                        "name": "여러 장 사진에도 같은 규칙을 적용할 수 있나요?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": "가능합니다. 여러 장 기능으로 같은 자르기 레이아웃을 여러 이미지에 반복 적용할 수 있습니다.",
                         },
                     },
                 ],
@@ -87,6 +95,7 @@ def render_index_html(config: dict[str, object]) -> str:
         "__SITE_URL__": str(config["site_url"]),
         "__REPO_URL__": str(config["repo_url"]),
         "__README_URL__": str(config["readme_url"]),
+        "__WIKI_URL__": str(config["wiki_url"]),
         "__SCHEMA_JSON__": build_schema(config),
     }
     rendered = template
@@ -120,8 +129,8 @@ def render_manifest(config: dict[str, object]) -> str:
         "start_url": str(config["site_url"]),
         "scope": str(config["site_url"]),
         "display": "standalone",
-        "theme_color": "#13221a",
-        "background_color": "#f6f0e5",
+        "theme_color": "#dd6d1f",
+        "background_color": "#f3eee6",
     }
     return json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
 

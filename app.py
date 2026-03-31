@@ -125,20 +125,20 @@ class AutoCropApp:
         self.last_batch_failures: list[Path] = []
 
         self.zoom_var = tk.StringVar(value="100%")
-        self.output_dir_var = tk.StringVar(value="Not selected")
+        self.output_dir_var = tk.StringVar(value="아직 정하지 않음")
         self.status_var = tk.StringVar(
-            value="Load an image or paste from the clipboard to start building crop regions."
+            value="사진을 열거나 붙여넣으면 바로 자르기 작업을 시작할 수 있습니다."
         )
         self.instruction_var = tk.StringVar(
             value=(
-                "Drag on the canvas to create a crop region. Drag inside a region to move it, drag handles to resize it, "
-                "hold Shift to lock a square, and use Ctrl + mouse wheel to zoom."
+                "빈 화면에서 드래그하면 자를 영역이 생깁니다. 영역 안을 끌면 이동하고, 모서리를 끌면 크기가 바뀝니다. "
+                "Shift를 누르면 정사각형으로 고정되고, Ctrl+마우스휠로 확대/축소할 수 있습니다."
             )
         )
-        self.image_summary_var = tk.StringVar(value="No image loaded")
-        self.selection_summary_var = tk.StringVar(value="0 regions")
-        self.workspace_summary_var = tk.StringVar(value="Select an output folder to unlock export.")
-        self.mode_summary_var = tk.StringVar(value="Waiting for image")
+        self.image_summary_var = tk.StringVar(value="사진이 아직 없습니다")
+        self.selection_summary_var = tk.StringVar(value="영역 0개")
+        self.workspace_summary_var = tk.StringVar(value="저장 폴더를 정하면 바로 저장할 수 있습니다.")
+        self.mode_summary_var = tk.StringVar(value="사진 기다리는 중")
 
         self._setup_styles()
         self._build_ui()
@@ -148,19 +148,19 @@ class AutoCropApp:
 
     def _setup_styles(self) -> None:
         self.colors = {
-            "bg": "#0d1117",
-            "hero": "#161b22",
-            "surface": "#11161d",
-            "surface_alt": "#1a212b",
-            "panel": "#0f141b",
-            "canvas": "#0a0f14",
-            "text": "#f3efe7",
-            "muted": "#9aa4af",
-            "line": "#293241",
-            "accent": "#ff8a1f",
-            "accent_hover": "#ff9f45",
-            "cool": "#20c7d9",
-            "cool_soft": "#102a31",
+            "bg": "#f3eee6",
+            "hero": "#fff7ee",
+            "surface": "#ffffff",
+            "surface_alt": "#f7f1e8",
+            "panel": "#ece4d8",
+            "canvas": "#fbfaf7",
+            "text": "#1e2430",
+            "muted": "#697384",
+            "line": "#dacfc1",
+            "accent": "#dd6d1f",
+            "accent_hover": "#ef8440",
+            "cool": "#0e7d84",
+            "cool_soft": "#dff2f1",
         }
 
         self.root.configure(bg=self.colors["bg"])
@@ -190,27 +190,33 @@ class AutoCropApp:
         style.configure("HeroTitle.TLabel", background=self.colors["hero"], foreground=self.colors["text"], font=("Bahnschrift SemiBold", 24))
         style.configure("HeroBody.TLabel", background=self.colors["hero"], foreground=self.colors["muted"], font=("Segoe UI", 10))
         style.configure("SectionTitle.TLabel", background=self.colors["surface"], foreground=self.colors["text"], font=("Bahnschrift SemiBold", 11))
-        style.configure("PanelTitle.TLabel", background=self.colors["surface"], foreground=self.colors["text"], font=("Bahnschrift SemiBold", 12))
+        style.configure("PanelTitle.TLabel", background=self.colors["surface"], foreground=self.colors["text"], font=("Bahnschrift SemiBold", 13))
         style.configure("CardTitle.TLabel", background=self.colors["surface_alt"], foreground=self.colors["muted"], font=("Segoe UI Semibold", 9))
         style.configure("CardValue.TLabel", background=self.colors["surface_alt"], foreground=self.colors["text"], font=("Segoe UI Semibold", 11))
         style.configure("Hint.TLabel", background=self.colors["surface"], foreground=self.colors["muted"])
-        style.configure("SidebarValue.TLabel", background=self.colors["surface_alt"], foreground=self.colors["text"], font=("Segoe UI Semibold", 10))
+        style.configure("SidebarValue.TLabel", background=self.colors["surface_alt"], foreground=self.colors["text"], font=("Segoe UI", 10))
         style.configure("SidebarHint.TLabel", background=self.colors["surface_alt"], foreground=self.colors["muted"])
-        style.configure("Pill.TLabel", background=self.colors["accent"], foreground=self.colors["bg"], padding=(10, 4), font=("Segoe UI Semibold", 9))
+        style.configure("LogoBadge.TLabel", background=self.colors["accent"], foreground="#ffffff", padding=(14, 10), font=("Bahnschrift SemiBold", 14))
+        style.configure("MiniTag.TLabel", background=self.colors["cool_soft"], foreground=self.colors["cool"], padding=(8, 3), font=("Segoe UI Semibold", 8))
+        style.configure("Pill.TLabel", background=self.colors["accent"], foreground="#ffffff", padding=(10, 4), font=("Segoe UI Semibold", 9))
         style.configure("PillMuted.TLabel", background=self.colors["cool_soft"], foreground=self.colors["cool"], padding=(10, 4), font=("Segoe UI Semibold", 9))
-        style.configure("Status.TLabel", background=self.colors["surface_alt"], foreground=self.colors["text"], padding=(12, 10))
+        style.configure("Status.TLabel", background=self.colors["hero"], foreground=self.colors["text"], padding=(12, 10))
 
-        style.configure("Action.TButton", background=self.colors["surface_alt"], foreground=self.colors["text"], padding=(12, 9), relief="flat", borderwidth=0, font=("Segoe UI Semibold", 9))
+        style.configure("Action.TButton", background=self.colors["surface"], foreground=self.colors["text"], padding=(12, 9), relief="solid", borderwidth=1, font=("Segoe UI Semibold", 9))
         style.map(
             "Action.TButton",
-            background=[("active", self.colors["cool_soft"]), ("disabled", self.colors["surface"])],
-            foreground=[("disabled", "#5f6872")],
+            background=[("active", "#fff2e7"), ("disabled", self.colors["surface_alt"])],
+            foreground=[("disabled", "#9e9a92")],
+            bordercolor=[("active", self.colors["accent"]), ("!active", self.colors["line"])],
+            lightcolor=[("active", self.colors["accent"]), ("!active", self.colors["line"])],
+            darkcolor=[("active", self.colors["accent"]), ("!active", self.colors["line"])],
         )
-        style.configure("Accent.TButton", background=self.colors["accent"], foreground=self.colors["bg"], padding=(14, 10), relief="flat", borderwidth=0, font=("Bahnschrift SemiBold", 10))
+        style.configure("Accent.TButton", background=self.colors["accent"], foreground="#ffffff", padding=(14, 10), relief="flat", borderwidth=0, font=("Bahnschrift SemiBold", 10))
         style.map(
             "Accent.TButton",
-            background=[("active", self.colors["accent_hover"]), ("disabled", "#5e3a15")],
-            foreground=[("disabled", "#bca28d")],
+            background=[("active", self.colors["accent_hover"]), ("disabled", "#dcb99d")],
+            foreground=[("disabled", "#fff8f2")],
+            bordercolor=[("active", "#c65f18"), ("!active", self.colors["accent"])],
         )
         style.configure("TEntry", padding=6, fieldbackground=self.colors["surface_alt"], foreground=self.colors["text"])
         style.configure("TCombobox", padding=6, fieldbackground=self.colors["surface_alt"], foreground=self.colors["text"], arrowsize=14)
@@ -223,15 +229,22 @@ class AutoCropApp:
         style.configure("TLabelframe.Label", background=self.colors["surface"], foreground=self.colors["text"], font=("Segoe UI Semibold", 10))
         style.configure("TNotebook", background=self.colors["surface"], borderwidth=0)
         style.configure("TNotebook.Tab", background=self.colors["surface_alt"], foreground=self.colors["muted"], padding=(12, 8))
-        style.map("TNotebook.Tab", background=[("selected", self.colors["accent"]), ("active", self.colors["cool_soft"])], foreground=[("selected", self.colors["bg"]), ("active", self.colors["text"])])
+        style.map("TNotebook.Tab", background=[("selected", self.colors["accent"]), ("active", self.colors["cool_soft"])], foreground=[("selected", "#ffffff"), ("active", self.colors["text"])])
         style.configure("TSeparator", background=self.colors["line"])
 
-    def _create_button_group(self, parent: ttk.Frame, title: str) -> ttk.Frame:
+    def _create_button_group(self, parent: ttk.Frame, tag: str, title: str) -> ttk.Frame:
         shell = ttk.Frame(parent, style="Surface.TFrame", padding=(14, 12))
-        ttk.Label(shell, text=title, style="SectionTitle.TLabel").pack(anchor="w")
+        header = ttk.Frame(shell, style="Surface.TFrame")
+        header.pack(fill="x")
+        ttk.Label(header, text=tag, style="MiniTag.TLabel").pack(side="left")
+        ttk.Label(header, text=title, style="SectionTitle.TLabel").pack(side="left", padx=(8, 0))
         row = ttk.Frame(shell, style="Surface.TFrame")
         row.pack(fill="x", pady=(10, 0))
         return row
+
+    def _make_clickable(self, *widgets: ttk.Button) -> None:
+        for widget in widgets:
+            widget.configure(cursor="hand2")
 
     def _create_info_card(self, parent: ttk.Frame, title: str, value_var: tk.StringVar) -> ttk.Frame:
         card = ttk.Frame(parent, style="Card.TFrame", padding=(12, 12))
@@ -283,14 +296,19 @@ class AutoCropApp:
         hero.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
         hero.columnconfigure(0, weight=1)
 
-        ttk.Label(hero, text=APP_TITLE, style="HeroTitle.TLabel").grid(row=0, column=0, sticky="w")
+        hero_brand = ttk.Frame(hero, style="Hero.TFrame")
+        hero_brand.grid(row=0, column=0, sticky="w")
+        ttk.Label(hero_brand, text="GC", style="LogoBadge.TLabel").pack(side="left")
+        title_block = ttk.Frame(hero_brand, style="Hero.TFrame")
+        title_block.pack(side="left", padx=(14, 0))
+        ttk.Label(title_block, text=APP_TITLE, style="HeroTitle.TLabel").pack(anchor="w")
         ttk.Label(
-            hero,
-            text="A sharper desktop workflow for repeated crop layouts, batch exports, and OCR-ready asset prep.",
+            title_block,
+            text="여러 장 사진 자르기, 저장, 글자 읽기를 한 화면에서 빠르게 처리하는 작업 도구입니다.",
             style="HeroBody.TLabel",
             wraplength=840,
             justify="left",
-        ).grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ).pack(anchor="w", pady=(6, 0))
 
         hero_pills = ttk.Frame(hero, style="Hero.TFrame")
         hero_pills.grid(row=0, column=1, rowspan=2, sticky="e")
@@ -303,31 +321,31 @@ class AutoCropApp:
         action_row.columnconfigure(1, weight=4)
         action_row.columnconfigure(2, weight=3)
 
-        source_row = self._create_button_group(action_row, "사진")
+        source_row = self._create_button_group(action_row, "IMG", "사진 가져오기")
         source_row.master.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         self.open_button = ttk.Button(source_row, text="사진 열기", command=self.open_image, style="Accent.TButton")
         self.open_button.pack(side="left")
-        self.paste_button = ttk.Button(source_row, text="사진 붙여넣기", command=self.paste_clipboard_image, style="Action.TButton")
+        self.paste_button = ttk.Button(source_row, text="붙여넣기", command=self.paste_clipboard_image, style="Action.TButton")
         self.paste_button.pack(side="left", padx=(8, 0))
-        self.save_config_button = ttk.Button(source_row, text="자르기 저장", command=self.save_configuration, style="Action.TButton")
+        self.save_config_button = ttk.Button(source_row, text="저장", command=self.save_configuration, style="Action.TButton")
         self.save_config_button.pack(side="left", padx=(8, 0))
-        self.load_config_button = ttk.Button(source_row, text="자르기 불러오기", command=self.load_configuration, style="Action.TButton")
+        self.load_config_button = ttk.Button(source_row, text="불러오기", command=self.load_configuration, style="Action.TButton")
         self.load_config_button.pack(side="left", padx=(8, 0))
 
-        process_row = self._create_button_group(action_row, "작업")
+        process_row = self._create_button_group(action_row, "CUT", "작업 실행")
         process_row.master.grid(row=0, column=1, sticky="nsew", padx=(0, 10))
-        self.batch_button = ttk.Button(process_row, text="여러 장 자르기", command=self.open_batch_process_dialog, style="Action.TButton")
+        self.batch_button = ttk.Button(process_row, text="여러 장", command=self.open_batch_process_dialog, style="Action.TButton")
         self.batch_button.pack(side="left")
-        self.retry_batch_button = ttk.Button(process_row, text="실패 다시", command=self.retry_failed_batch_jobs, style="Action.TButton")
+        self.retry_batch_button = ttk.Button(process_row, text="다시", command=self.retry_failed_batch_jobs, style="Action.TButton")
         self.retry_batch_button.pack(side="left", padx=(8, 0))
-        self.history_button = ttk.Button(process_row, text="기록 보기", command=self.open_history_viewer, style="Action.TButton")
+        self.history_button = ttk.Button(process_row, text="기록", command=self.open_history_viewer, style="Action.TButton")
         self.history_button.pack(side="left", padx=(8, 0))
         self.ocr_button = ttk.Button(process_row, text="글자 읽기", command=self.run_cpp_ocr, style="Action.TButton")
         self.ocr_button.pack(side="left", padx=(8, 0))
-        self.import_model_button = ttk.Button(process_row, text="글자 모델 넣기", command=self.import_ocr_model_package, style="Action.TButton")
+        self.import_model_button = ttk.Button(process_row, text="모델 넣기", command=self.import_ocr_model_package, style="Action.TButton")
         self.import_model_button.pack(side="left", padx=(8, 0))
 
-        view_row = self._create_button_group(action_row, "화면")
+        view_row = self._create_button_group(action_row, "VIEW", "화면 조절")
         view_row.master.grid(row=0, column=2, sticky="nsew")
         self.zoom_out_button = ttk.Button(view_row, text="-", command=lambda: self.zoom_by(1 / ZOOM_STEP), style="Action.TButton")
         self.zoom_out_button.pack(side="left")
@@ -338,13 +356,13 @@ class AutoCropApp:
         self.zoom_fit_button = ttk.Button(view_row, text="화면 맞춤", command=self.fit_to_view, style="Action.TButton")
         self.zoom_fit_button.pack(side="left", padx=(8, 0))
         ttk.Separator(view_row, orient="vertical").pack(side="left", fill="y", padx=10)
-        self.delete_button = ttk.Button(view_row, text="영역 지우기", command=self.delete_selected_rectangle, style="Action.TButton")
+        self.delete_button = ttk.Button(view_row, text="지우기", command=self.delete_selected_rectangle, style="Action.TButton")
         self.delete_button.pack(side="left")
-        self.clear_button = ttk.Button(view_row, text="전부 지우기", command=self.clear_rectangles, style="Action.TButton")
+        self.clear_button = ttk.Button(view_row, text="전체 지우기", command=self.clear_rectangles, style="Action.TButton")
         self.clear_button.pack(side="left", padx=(8, 0))
         self.grid_button = ttk.Button(view_row, text="칸 나누기", command=self.open_grid_generator_dialog, style="Action.TButton")
         self.grid_button.pack(side="left", padx=(8, 0))
-        self.configure_button = ttk.Button(view_row, text="자르기 확정", command=self.apply_settings, style="Action.TButton")
+        self.configure_button = ttk.Button(view_row, text="확정", command=self.apply_settings, style="Action.TButton")
         self.configure_button.pack(side="left", padx=(8, 0))
 
         canvas_shell = ttk.Frame(wrapper, style="Surface.TFrame", padding=(14, 14, 14, 14))
@@ -387,15 +405,15 @@ class AutoCropApp:
         sidebar.grid(row=2, column=1, sticky="nsew")
         sidebar.columnconfigure(0, weight=1)
 
-        image_card = self._create_info_card(sidebar, "Current Image", self.image_summary_var)
+        image_card = self._create_info_card(sidebar, "현재 사진", self.image_summary_var)
         image_card.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        selection_card = self._create_info_card(sidebar, "Selection State", self.selection_summary_var)
+        selection_card = self._create_info_card(sidebar, "자르는 영역", self.selection_summary_var)
         selection_card.grid(row=1, column=0, sticky="ew", pady=(0, 10))
 
         output_card = ttk.Frame(sidebar, style="Card.TFrame", padding=(12, 12))
         output_card.grid(row=2, column=0, sticky="ew", pady=(0, 10))
         output_card.columnconfigure(0, weight=1)
-        ttk.Label(output_card, text="Output Folder", style="CardTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(output_card, text="저장 폴더", style="CardTitle.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(output_card, textvariable=self.output_dir_var, style="CardValue.TLabel", wraplength=250, justify="left").grid(row=1, column=0, sticky="w", pady=(6, 10))
         action_bar = ttk.Frame(output_card, style="Card.TFrame")
         action_bar.grid(row=2, column=0, sticky="ew")
@@ -406,11 +424,11 @@ class AutoCropApp:
 
         focus_card = ttk.Frame(sidebar, style="Card.TFrame", padding=(12, 12))
         focus_card.grid(row=3, column=0, sticky="ew", pady=(0, 10))
-        ttk.Label(focus_card, text="Workflow Focus", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(focus_card, text="바로 하기", style="CardTitle.TLabel").pack(anchor="w")
         ttk.Label(focus_card, textvariable=self.workspace_summary_var, style="SidebarValue.TLabel", wraplength=250, justify="left").pack(anchor="w", pady=(6, 0))
         ttk.Label(
             focus_card,
-            text="Shortcuts: Ctrl+V paste, Ctrl+wheel zoom, Shift locks a square, Delete removes selection.",
+            text="바로 가기: Ctrl+V 붙여넣기, Ctrl+휠 확대/축소, Shift 정사각형, Delete 영역 지우기",
             style="SidebarHint.TLabel",
             wraplength=250,
             justify="left",
@@ -418,6 +436,28 @@ class AutoCropApp:
 
         self.split_button = ttk.Button(sidebar, text="잘라서 저장", command=self.split_image, style="Accent.TButton")
         self.split_button.grid(row=4, column=0, sticky="ew", pady=(4, 0))
+        self._make_clickable(
+            self.open_button,
+            self.paste_button,
+            self.save_config_button,
+            self.load_config_button,
+            self.batch_button,
+            self.retry_batch_button,
+            self.history_button,
+            self.ocr_button,
+            self.import_model_button,
+            self.zoom_out_button,
+            self.zoom_in_button,
+            self.zoom_reset_button,
+            self.zoom_fit_button,
+            self.delete_button,
+            self.clear_button,
+            self.grid_button,
+            self.configure_button,
+            self.output_dir_button,
+            self.set_cwd_button,
+            self.split_button,
+        )
 
         status_bar = ttk.Label(wrapper, textvariable=self.status_var, style="Status.TLabel", anchor="w", justify="left")
         status_bar.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(14, 0))
@@ -441,14 +481,14 @@ class AutoCropApp:
         self.canvas.create_text(
             520,
             300,
-            text="Load an image or paste from clipboard",
+            text="사진을 열거나 붙여넣어서 시작하세요",
             fill=self.colors["text"],
             font=("Bahnschrift SemiBold", 24),
         )
         self.canvas.create_text(
             520,
             352,
-            text="Then sketch crop regions directly on the canvas and export them in one pass.",
+            text="영역을 그린 뒤 한 번에 잘라 저장할 수 있습니다.",
             fill=self.colors["muted"],
             font=("Segoe UI", 12),
         )
@@ -488,26 +528,26 @@ class AutoCropApp:
         self.split_button.configure(state=split_state)
 
         if self.loaded_image is None:
-            self.image_summary_var.set("No image loaded")
-            self.selection_summary_var.set("0 regions")
-            self.mode_summary_var.set("Waiting for image")
+            self.image_summary_var.set("사진이 아직 없습니다")
+            self.selection_summary_var.set("영역 0개")
+            self.mode_summary_var.set("사진 기다리는 중")
         else:
             self.image_summary_var.set(f"{self.loaded_image.display_name}\n{self.loaded_image.width} x {self.loaded_image.height}")
-            selection_state = "confirmed" if self.is_configured and has_rectangles else "draft" if has_rectangles else "empty"
-            self.selection_summary_var.set(f"{len(self.rectangles)} regions | {selection_state}")
+            selection_state = "저장 준비" if self.is_configured and has_rectangles else "고르는 중" if has_rectangles else "비어 있음"
+            self.selection_summary_var.set(f"영역 {len(self.rectangles)}개 · {selection_state}")
             if split_state == "normal":
-                self.mode_summary_var.set("Ready to export")
+                self.mode_summary_var.set("저장 준비 끝")
             elif has_rectangles:
-                self.mode_summary_var.set("Layout in progress")
+                self.mode_summary_var.set("영역 고르는 중")
             else:
-                self.mode_summary_var.set("Image loaded")
+                self.mode_summary_var.set("사진 불러옴")
 
         if has_output_dir:
-            self.workspace_summary_var.set("Exports are unlocked. You can batch, OCR, or save crops from this workspace.")
+            self.workspace_summary_var.set("지금 바로 저장하거나, 여러 장 자르기와 글자 읽기를 이어서 할 수 있습니다.")
         elif has_image:
-            self.workspace_summary_var.set("Pick an output folder to unlock crop export and batch output.")
+            self.workspace_summary_var.set("저장 폴더만 정하면 바로 잘라서 저장할 수 있습니다.")
         else:
-            self.workspace_summary_var.set("Select an output folder to unlock export.")
+            self.workspace_summary_var.set("먼저 사진을 넣고 저장 폴더를 정해 주세요.")
 
     def open_image(self) -> None:
         path = filedialog.askopenfilename(

@@ -3,37 +3,37 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Grid Crop Image | Windows image crop and split tool</title>
-  <meta name="description" content="Grid Crop Image는 Windows에서 스크린샷 자르기, 클립보드 이미지 붙여넣기, 다중 영역 크롭, JSON 레이아웃 저장과 불러오기, 순차 저장을 지원하는 이미지 분할 도구입니다.">
-  <meta name="keywords" content="Grid Crop Image, Auto Crop Splitter, Windows image crop tool, screenshot crop, clipboard image paste, multi-region crop, JSON crop layout, PyInstaller, Tkinter, Pillow">
+  <title>Grid Crop Studio | Windows image cutting workspace</title>
+  <meta name="description" content="Grid Crop Studio는 Windows에서 사진 자르기, 여러 장 일괄 자르기, JSON 레이아웃 저장과 불러오기, 작업 기록 보기, 선택형 OCR 흐름까지 지원하는 데스크톱 이미지 작업 도구입니다.">
+  <meta name="keywords" content="Grid Crop Studio, Auto Crop Splitter, Windows image cutting workspace, photo crop app, clipboard image paste, batch image crop, JSON crop layout, crop history, PyInstaller, Tkinter, Pillow">
   <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
   <meta name="googlebot" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
-  <meta name="theme-color" content="#13221a">
-  <meta name="application-name" content="Grid Crop Image">
+  <meta name="theme-color" content="#dd6d1f">
+  <meta name="application-name" content="Grid Crop Studio">
   <meta name="author" content="sheryloe">
   <link rel="canonical" href="https://sheryloe.github.io/grid-crop-image/">
   <link rel="manifest" href="https://sheryloe.github.io/grid-crop-image/site.webmanifest">
   <link rel="sitemap" type="application/xml" title="Sitemap" href="https://sheryloe.github.io/grid-crop-image/sitemap.xml">
   <meta property="og:type" content="website">
   <meta property="og:locale" content="ko_KR">
-  <meta property="og:site_name" content="Grid Crop Image">
-  <meta property="og:title" content="Grid Crop Image | Windows image crop and split tool">
-  <meta property="og:description" content="Grid Crop Image는 Windows에서 스크린샷 자르기, 클립보드 이미지 붙여넣기, 다중 영역 크롭, JSON 레이아웃 저장과 불러오기, 순차 저장을 지원하는 이미지 분할 도구입니다.">
+  <meta property="og:site_name" content="Grid Crop Studio">
+  <meta property="og:title" content="Grid Crop Studio | Windows image cutting workspace">
+  <meta property="og:description" content="Grid Crop Studio는 Windows에서 사진 자르기, 여러 장 일괄 자르기, JSON 레이아웃 저장과 불러오기, 작업 기록 보기, 선택형 OCR 흐름까지 지원하는 데스크톱 이미지 작업 도구입니다.">
   <meta property="og:url" content="https://sheryloe.github.io/grid-crop-image/">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Grid Crop Image | Windows image crop and split tool">
-  <meta name="twitter:description" content="Windows image crop tool with clipboard paste, JSON crop layouts, ordered export, and reusable blog asset workflows.">
+  <meta name="twitter:title" content="Grid Crop Studio | Windows image cutting workspace">
+  <meta name="twitter:description" content="Windows desktop image cutting workspace with crop areas, reusable JSON layouts, batch exports, history, and optional OCR.">
   <style>
     :root {
-      --bg: #f6f0e5;
-      --card: rgba(255, 253, 249, 0.92);
-      --line: rgba(19, 34, 26, 0.12);
-      --text: #1f2a22;
-      --muted: #5d665d;
-      --accent: #b85b32;
-      --accent-deep: #7d2f13;
-      --green: #1f4c3a;
-      --shadow: 0 24px 60px rgba(31, 42, 34, 0.1);
+      --bg: #f3eee6;
+      --card: rgba(255, 255, 255, 0.94);
+      --line: rgba(44, 49, 59, 0.12);
+      --text: #1e2430;
+      --muted: #697384;
+      --accent: #dd6d1f;
+      --accent-deep: #a84d11;
+      --green: #0e7d84;
+      --shadow: 0 24px 60px rgba(30, 36, 48, 0.08);
       --radius-xl: 28px;
       --radius-lg: 18px;
       --content: 1160px;
@@ -51,9 +51,9 @@
       color: var(--text);
       line-height: 1.7;
       background:
-        radial-gradient(circle at top left, rgba(184, 91, 50, 0.18), transparent 32%),
-        radial-gradient(circle at top right, rgba(31, 76, 58, 0.12), transparent 30%),
-        linear-gradient(180deg, #f9f3ea 0%, #f1e7d6 50%, #f6f1e8 100%);
+        radial-gradient(circle at top left, rgba(221, 109, 31, 0.16), transparent 34%),
+        radial-gradient(circle at top right, rgba(14, 125, 132, 0.12), transparent 28%),
+        linear-gradient(180deg, #f8f3eb 0%, #f0e6d9 52%, #f6f2ea 100%);
     }
 
     a {
@@ -101,7 +101,7 @@
       padding: 0 18px;
       border-radius: 999px;
       border: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.8);
+      background: rgba(255, 255, 255, 0.82);
       transition: transform 160ms ease;
     }
 
@@ -113,8 +113,8 @@
     .hero-card {
       padding: 36px;
       border-radius: var(--radius-xl);
-      background: linear-gradient(145deg, rgba(255, 249, 240, 0.95), rgba(255, 255, 255, 0.88));
-      border: 1px solid rgba(19, 34, 26, 0.08);
+      background: linear-gradient(145deg, rgba(255, 249, 241, 0.96), rgba(255, 255, 255, 0.92));
+      border: 1px solid rgba(44, 49, 59, 0.08);
       box-shadow: var(--shadow);
     }
 
@@ -130,7 +130,7 @@
       align-items: center;
       padding: 7px 12px;
       border-radius: 999px;
-      background: rgba(31, 76, 58, 0.08);
+      background: rgba(14, 125, 132, 0.1);
       color: var(--green);
       font-size: 0.9rem;
       font-weight: 700;
@@ -182,7 +182,7 @@
     }
 
     .button.primary {
-      background: #16231c;
+      background: #1e2430;
       color: #fff;
       border-color: transparent;
     }
@@ -211,7 +211,7 @@
       border-radius: var(--radius-lg);
       background: var(--card);
       border: 1px solid rgba(19, 34, 26, 0.08);
-      box-shadow: 0 12px 28px rgba(31, 42, 34, 0.05);
+      box-shadow: 0 12px 28px rgba(30, 36, 48, 0.06);
     }
 
     .stat-value {
@@ -288,7 +288,7 @@
       gap: 18px;
       padding: 24px 28px;
       border-radius: var(--radius-xl);
-      background: #16231c;
+      background: #1e2430;
       color: rgba(255, 255, 255, 0.9);
     }
 
@@ -339,7 +339,7 @@
   "@graph": [
     {
       "@type": "SoftwareApplication",
-      "name": "Grid Crop Image",
+      "name": "Grid Crop Studio",
       "alternateName": "Auto Crop Splitter",
       "applicationCategory": "UtilityApplication",
       "operatingSystem": "Windows",
@@ -347,8 +347,8 @@
       "url": "https://sheryloe.github.io/grid-crop-image/",
       "downloadUrl": "https://github.com/sheryloe/grid-crop-image",
       "codeRepository": "https://github.com/sheryloe/grid-crop-image",
-      "description": "Grid Crop Image is a Windows image crop and split tool for screenshot clipping, clipboard image paste, manual multi-region cropping, JSON layout save and load, and sequential export.",
-      "softwareRequirements": "Python 3.11+, Pillow, Windows 10+",
+      "description": "Grid Crop Studio is a Windows desktop image cutting workspace for manual crop selection, reusable JSON layouts, batch exports, history tracking, and optional OCR workflows.",
+      "softwareRequirements": "Python 3.11+, Pillow, Windows 10 or 11",
       "offers": {
         "@type": "Offer",
         "price": "0",
@@ -364,10 +364,10 @@
       "mainEntity": [
         {
           "@type": "Question",
-          "name": "Grid Crop Image는 어떤 작업에 잘 맞나요?",
+          "name": "Grid Crop Studio는 어떤 작업에 잘 맞나요?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "스크린샷 분할, 블로그 자산 제작, 반복되는 다중 크롭 작업에 적합합니다."
+            "text": "스크린샷 자르기, 카드형 이미지 분할, 블로그 자산 제작, 반복되는 다중 자르기 작업에 적합합니다."
           }
         },
         {
@@ -375,7 +375,7 @@
           "name": "클립보드 이미지를 바로 붙여넣을 수 있나요?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "가능합니다. Ctrl+V로 이미지를 바로 가져와 작업을 시작할 수 있습니다."
+            "text": "가능합니다. Ctrl+V로 사진을 바로 가져와 작업을 시작할 수 있습니다."
           }
         },
         {
@@ -383,7 +383,15 @@
           "name": "JSON 레이아웃을 다시 사용할 수 있나요?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "가능합니다. 저장한 크롭 좌표와 설정을 다시 불러와 같은 작업을 반복할 수 있습니다."
+            "text": "가능합니다. 저장한 자르기 좌표와 설정을 다시 불러와 같은 작업을 반복할 수 있습니다."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "여러 장 사진에도 같은 규칙을 적용할 수 있나요?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "가능합니다. 여러 장 기능으로 같은 자르기 레이아웃을 여러 이미지에 반복 적용할 수 있습니다."
           }
         }
       ]
@@ -396,38 +404,40 @@
   <header class="hero">
     <div class="wrap">
       <div class="topbar">
-        <div class="brand">Grid Crop Image</div>
+        <div class="brand">Grid Crop Studio</div>
         <nav class="nav" aria-label="Quick links">
           <a href="https://github.com/sheryloe/grid-crop-image">GitHub Repository</a>
           <a href="https://github.com/sheryloe/grid-crop-image/blob/main/README.md">README</a>
+          <a href="https://github.com/sheryloe/grid-crop-image/blob/main/WIKI.md">Wiki</a>
           <a href="#faq">FAQ</a>
         </nav>
       </div>
 
       <section class="hero-card" aria-labelledby="hero-title">
         <div class="badge-row">
-          <span class="badge">Windows Image Crop Tool</span>
-          <span class="badge">Clipboard Paste</span>
-          <span class="badge">JSON Layout Save</span>
+          <span class="badge">Windows Desktop App</span>
+          <span class="badge">Batch Crop</span>
+          <span class="badge">History + OCR</span>
         </div>
-        <h1 id="hero-title">빠르게 자르고, 여러 조각으로 저장하는 Windows 이미지 도구</h1>
-        <p class="lead">Grid Crop Image는 Windows에서 스크린샷 자르기, 클립보드 이미지 붙여넣기, 다중 영역 크롭, JSON 레이아웃 저장과 불러오기, 순차 저장을 지원하는 이미지 분할 도구입니다. 반복되는 스크린샷 자르기, 블로그용 이미지 분할, 동일한 레이아웃 재사용 작업을 빠르게 처리할 수 있습니다.</p>
+        <h1 id="hero-title">사진을 빠르게 자르고, 여러 장에 반복 적용하는 Windows 작업 공간</h1>
+        <p class="lead">Grid Crop Studio는 Windows에서 사진 자르기, 여러 장 일괄 자르기, JSON 레이아웃 저장과 불러오기, 작업 기록 보기, 선택형 OCR 흐름까지 지원하는 데스크톱 이미지 작업 도구입니다. 반복되는 스크린샷 자르기, 카드형 이미지 분할, 블로그용 자산 제작, 같은 규칙의 대량 저장 작업을 더 빠르게 처리할 수 있습니다.</p>
         <div class="hero-actions">
           <a class="button primary" href="https://github.com/sheryloe/grid-crop-image">Repository</a>
-          <a class="button" href="https://github.com/sheryloe/grid-crop-image/blob/main/README.md">Usage Guide</a>
+          <a class="button" href="https://github.com/sheryloe/grid-crop-image/blob/main/README.md">README</a>
+          <a class="button" href="https://github.com/sheryloe/grid-crop-image/blob/main/WIKI.md">Wiki</a>
         </div>
         <div class="stats">
           <article class="card">
             <span class="stat-value">Ctrl + V</span>
-            클립보드 이미지를 바로 불러와 파일 저장 없이 작업을 시작할 수 있습니다.
+            클립보드 사진을 바로 붙여넣고 곧바로 자르기 작업을 시작할 수 있습니다.
           </article>
           <article class="card">
-            <span class="stat-value">JSON Save</span>
-            크롭 좌표와 작업 상태를 저장하고 다시 불러올 수 있습니다.
+            <span class="stat-value">JSON Layout</span>
+            자르는 영역을 저장하고 다시 불러와 같은 규칙을 계속 재사용할 수 있습니다.
           </article>
           <article class="card">
-            <span class="stat-value">Ordered Export</span>
-            선택한 순서대로 결과 파일을 정리해서 저장합니다.
+            <span class="stat-value">Batch + History</span>
+            여러 장 저장과 작업 기록 보기를 한 흐름으로 이어서 처리할 수 있습니다.
           </article>
         </div>
       </section>
@@ -439,21 +449,21 @@
       <div class="wrap">
         <div class="section-head">
           <span class="eyebrow">Why This Tool</span>
-          <h2>반복 작업에 맞춘 이미지 분할 도구</h2>
-          <p>무거운 편집기 대신 빠르게 실행되고 바로 저장할 수 있는 데스크톱 유틸리티에 초점을 맞췄습니다.</p>
+          <h2>반복 작업을 위한 실제 데스크톱 작업 도구</h2>
+          <p>무거운 편집기 대신 바로 열리고 바로 자르고 바로 저장할 수 있는 작업 흐름에 초점을 맞췄습니다.</p>
         </div>
         <div class="grid">
           <article class="card">
-            <h3>Screenshot Workflow</h3>
-            <p>스크린샷 자르기와 문서용 이미지 정리에 필요한 핵심 흐름만 남겼습니다.</p>
+            <h3>Fast Photo Cutting</h3>
+            <p>사진을 열고 영역을 정한 뒤 저장하는 흐름을 짧게 유지했습니다.</p>
           </article>
           <article class="card">
             <h3>Reusable Layouts</h3>
-            <p>한 번 만든 크롭 구성을 JSON으로 저장해 같은 형식의 이미지에 반복 적용할 수 있습니다.</p>
+            <p>한 번 만든 자르기 영역을 JSON으로 저장하고 같은 형식의 이미지에 반복 적용할 수 있습니다.</p>
           </article>
           <article class="card">
             <h3>Windows Distribution</h3>
-            <p>PyInstaller 기반 EXE 빌드를 제공해 Python 환경이 없는 곳에서도 배포하기 쉽습니다.</p>
+            <p>PyInstaller 기반 EXE 빌드를 제공해 Python 환경이 없는 PC에서도 배포하기 쉽습니다.</p>
           </article>
         </div>
       </div>
@@ -464,32 +474,32 @@
         <div class="section-head">
           <span class="eyebrow">Core Features</span>
           <h2>핵심 기능</h2>
-          <p>실제 작업 흐름에 직접 연결되는 기능만 중심으로 구성했습니다.</p>
+          <p>자주 쓰는 흐름만 남기고, 반복 작업에 필요한 기능을 중심으로 구성했습니다.</p>
         </div>
         <div class="grid">
           <article class="card">
             <h3>Clipboard Paste</h3>
-            <p>`Ctrl + V`로 이미지를 바로 불러와 빠르게 작업을 시작할 수 있습니다.</p>
+            <p>`Ctrl + V`로 사진을 바로 붙여넣어 빠르게 작업을 시작할 수 있습니다.</p>
           </article>
           <article class="card">
-            <h3>Multi-Region Crop</h3>
-            <p>여러 개의 크롭 영역을 만들고 이동, 삭제, 재정렬할 수 있습니다.</p>
+            <h3>Multi-Region Cutting</h3>
+            <p>여러 개의 자르기 영역을 만들고 이동, 삭제, 조절할 수 있습니다.</p>
           </article>
           <article class="card">
-            <h3>JSON Layout Save and Load</h3>
-            <p>반복되는 작업을 위해 좌표와 출력 설정을 저장하고 다시 불러올 수 있습니다.</p>
+            <h3>JSON Save and Load</h3>
+            <p>반복 작업을 위해 좌표와 출력 설정을 저장하고 다시 불러올 수 있습니다.</p>
           </article>
           <article class="card">
-            <h3>Zoom Controls</h3>
-            <p>확대, 축소, 100%, 맞춤 보기로 세밀한 영역 선택을 돕습니다.</p>
+            <h3>Batch Processing</h3>
+            <p>한 번 만든 규칙을 여러 장 사진에 그대로 적용해 한 번에 저장할 수 있습니다.</p>
           </article>
           <article class="card">
-            <h3>Ordered Export</h3>
-            <p>정해진 순서대로 파일명을 붙여 결과물을 안정적으로 저장합니다.</p>
+            <h3>History Viewer</h3>
+            <p>저장 작업과 OCR 작업을 기록으로 남기고 다시 확인할 수 있습니다.</p>
           </article>
           <article class="card">
-            <h3>Stable EXE Build</h3>
-            <p>현재 빌드 흐름은 자동 의존성 설치와 잠금 우회 로직을 포함합니다.</p>
+            <h3>Optional OCR</h3>
+            <p>원하면 C++ OCR 실행기와 모델 ZIP을 연결해 글자 읽기 흐름까지 확장할 수 있습니다.</p>
           </article>
         </div>
       </div>
@@ -500,21 +510,48 @@
         <div class="section-head">
           <span class="eyebrow">Workflow</span>
           <h2>작업 흐름</h2>
-          <p>처음 이미지 로드부터 결과 저장까지의 단계를 단순하게 유지했습니다.</p>
+          <p>처음 사진 로드부터 저장까지의 단계를 짧고 분명하게 유지했습니다.</p>
         </div>
         <div class="flow">
           <article class="card">
             <h3>Recommended Flow</h3>
-            <p>이미지를 열거나 붙여넣고, 출력 폴더를 정한 뒤, 크롭 영역을 만든 다음 설정을 확정하고 저장하면 됩니다. 같은 작업을 반복할 경우 JSON 레이아웃을 다시 불러와 시간을 줄일 수 있습니다.</p>
+            <p>사진을 열거나 붙여넣고, 저장 폴더를 정하고, 자를 영역을 만든 뒤, 확정하고 저장하면 됩니다. 같은 작업을 반복할 경우 JSON 레이아웃을 다시 불러와 시간을 줄일 수 있습니다.</p>
           </article>
           <aside class="card" aria-label="Workflow steps">
             <ol class="steps">
-              <li><span class="step-no">01</span><div>Open an image or paste with <strong>Ctrl + V</strong></div></li>
-              <li><span class="step-no">02</span><div>Choose the output folder</div></li>
-              <li><span class="step-no">03</span><div>Create and adjust crop regions</div></li>
-              <li><span class="step-no">04</span><div>Apply settings and export</div></li>
+              <li><span class="step-no">01</span><div>사진 열기 또는 <strong>Ctrl + V</strong> 붙여넣기</div></li>
+              <li><span class="step-no">02</span><div>저장 폴더 정하기</div></li>
+              <li><span class="step-no">03</span><div>영역 만들고 위치 조절하기</div></li>
+              <li><span class="step-no">04</span><div>확정 후 잘라서 저장하기</div></li>
             </ol>
           </aside>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="wrap">
+        <div class="section-head">
+          <span class="eyebrow">Docs</span>
+          <h2>README와 Wiki로 빠르게 파악하기</h2>
+          <p>처음 설치와 실행은 README에서, 실제 작업 흐름과 반복 작업 팁은 Wiki에서 바로 확인할 수 있습니다.</p>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <h3>README</h3>
+            <p>실행 방법, EXE 빌드, OCR 준비, 저장 구조를 빠르게 확인할 수 있습니다.</p>
+            <p><a href="https://github.com/sheryloe/grid-crop-image/blob/main/README.md">README 열기</a></p>
+          </article>
+          <article class="card">
+            <h3>Wiki</h3>
+            <p>메인 화면 구성, 레이아웃 재사용, 여러 장 처리, 기록 보기 흐름을 따라가며 볼 수 있습니다.</p>
+            <p><a href="https://github.com/sheryloe/grid-crop-image/blob/main/WIKI.md">Wiki 열기</a></p>
+          </article>
+          <article class="card">
+            <h3>Repository</h3>
+            <p>코드, 빌드 파일, Pages 템플릿, OCR 모듈을 한 저장소에서 같이 관리합니다.</p>
+            <p><a href="https://github.com/sheryloe/grid-crop-image">Repository 열기</a></p>
+          </article>
         </div>
       </div>
     </section>
@@ -524,24 +561,24 @@
         <div class="section-head">
           <span class="eyebrow">FAQ</span>
           <h2>자주 묻는 질문</h2>
-          <p>프로젝트 목적과 핵심 사용 흐름을 빠르게 확인할 수 있도록 정리했습니다.</p>
+          <p>공개 페이지에서 바로 이해할 수 있도록 핵심 질문만 간단히 정리했습니다.</p>
         </div>
         <div class="faq-grid">
           <article class="card">
             <h3>어떤 작업에 잘 맞나요?</h3>
-            <p>스크린샷 분할, 블로그 자산 제작, 반복되는 다중 크롭 작업에 적합합니다.</p>
+            <p>스크린샷 자르기, 카드형 이미지 분할, 블로그 자산 제작, 반복되는 다중 자르기 작업에 적합합니다.</p>
           </article>
           <article class="card">
             <h3>클립보드 이미지도 바로 붙여넣을 수 있나요?</h3>
-            <p>가능합니다. `Ctrl + V`로 이미지를 바로 가져와 작업을 시작할 수 있습니다.</p>
+            <p>가능합니다. `Ctrl + V`로 사진을 바로 가져와 작업을 시작할 수 있습니다.</p>
           </article>
           <article class="card">
             <h3>레이아웃을 다시 사용할 수 있나요?</h3>
-            <p>가능합니다. JSON으로 저장한 크롭 레이아웃을 다시 불러와 재사용할 수 있습니다.</p>
+            <p>가능합니다. JSON으로 저장한 자르기 레이아웃을 다시 불러와 재사용할 수 있습니다.</p>
           </article>
           <article class="card">
-            <h3>EXE 빌드는 어떻게 하나요?</h3>
-            <p>`build_exe.bat`를 실행하면 의존성 확인부터 빌드까지 자동으로 처리합니다.</p>
+            <h3>여러 장도 한 번에 저장할 수 있나요?</h3>
+            <p>가능합니다. `여러 장` 기능으로 같은 자르기 규칙을 여러 이미지에 반복 적용할 수 있습니다.</p>
           </article>
         </div>
       </div>
@@ -552,12 +589,13 @@
     <div class="wrap">
       <div class="footer">
         <div>
-          <strong>Grid Crop Image</strong><br>
-          Windows image crop and split tool
+          <strong>Grid Crop Studio</strong><br>
+          Windows image cutting workspace
         </div>
         <div>
           <a href="https://github.com/sheryloe/grid-crop-image">Repository</a><br>
-          <a href="https://github.com/sheryloe/grid-crop-image/blob/main/README.md">README</a>
+          <a href="https://github.com/sheryloe/grid-crop-image/blob/main/README.md">README</a><br>
+          <a href="https://github.com/sheryloe/grid-crop-image/blob/main/WIKI.md">Wiki</a>
         </div>
       </div>
     </div>
