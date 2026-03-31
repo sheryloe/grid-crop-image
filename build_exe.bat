@@ -72,9 +72,9 @@ if exist "%SPEC_FILE%" (
     )
 ) else (
     if defined FALLBACK_DIST (
-        python -m PyInstaller --noconfirm --clean --distpath "%FALLBACK_DIST%" --windowed --name "%APP_NAME%" --collect-all PIL app.py
+        python -m PyInstaller --noconfirm --clean --distpath "%FALLBACK_DIST%" --windowed --name "%APP_NAME%" --collect-all PIL --collect-submodules PIL app.py
     ) else (
-        python -m PyInstaller --noconfirm --clean --windowed --name "%APP_NAME%" --collect-all PIL app.py
+        python -m PyInstaller --noconfirm --clean --windowed --name "%APP_NAME%" --collect-all PIL --collect-submodules PIL app.py
     )
 )
 
@@ -83,8 +83,14 @@ if errorlevel 1 (
     exit /b 1
 )
 
+set "WORK_EXE=%CD%\build\%APP_NAME%\%APP_NAME%.exe"
+if exist "%WORK_EXE%" (
+    del /f /q "%WORK_EXE%" >nul 2>&1
+)
+
 if defined FALLBACK_DIST set "OUTPUT_EXE=%FALLBACK_DIST%\%APP_NAME%\%APP_NAME%.exe"
 echo Build completed: "%OUTPUT_EXE%"
+echo IMPORTANT: Run the EXE from dist folder only. Do not run from build\%APP_NAME%\.
 exit /b 0
 
 :set_fallback_dist

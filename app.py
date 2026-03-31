@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+import tempfile
 import threading
 import tkinter as tk
+import zipfile
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from tkinter import Listbox
 from tkinter import filedialog, messagebox, ttk
 
 PIL_IMPORT_ERROR: ImportError | None = None
@@ -25,7 +30,7 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
     IMAGEGRAB_IMPORT_ERROR = exc
 
 
-APP_TITLE = "Auto Crop Splitter"
+APP_TITLE = "그리드 크롭 이미지 고도화 프로젝트"
 SUPPORTED_FILE_TYPES = [
     ("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff"),
     ("All files", "*.*"),
@@ -42,6 +47,9 @@ MAX_ZOOM = 8.0
 ZOOM_STEP = 1.25
 CONTROL_MASK = 0x0004
 SHIFT_MASK = 0x0001
+HISTORY_FILENAME = ".crop_history.jsonl"
+DEFAULT_OCR_MODEL_DIR = Path("cpp/ocr_engine/models")
+REQUIRED_OCR_MODEL_FILES = ("detector.engine", "recognizer.engine")
 
 
 @dataclass
@@ -113,6 +121,8 @@ class AutoCropApp:
         self.selected_rectangle_index: int | None = None
         self.drag_context: dict[str, object] | None = None
         self.is_configured = False
+        self.last_batch_context: dict[str, object] | None = None
+        self.last_batch_failures: list[Path] = []
 
         self.zoom_var = tk.StringVar(value="100%")
         self.output_dir_var = tk.StringVar(value="저장 폴더: 선택되지 않음")
@@ -152,6 +162,16 @@ class AutoCropApp:
 
         self.batch_button = ttk.Button(toolbar, text="배치 처리", command=self.open_batch_process_dialog)
         self.batch_button.pack(side="left", padx=(16, 0))
+        self.retry_batch_button = ttk.Button(toolbar, text="실패 재시도", command=self.retry_failed_batch_jobs)
+        self.retry_batch_button.pack(side="left", padx=(8, 0))
+
+        self.history_button = ttk.Button(toolbar, text="이력 뷰어", command=self.open_history_viewer)
+        self.history_button.pack(side="left", padx=(8, 0))
+
+        self.ocr_button = ttk.Button(toolbar, text="OCR (C++/TRT)", command=self.run_cpp_ocr)
+        self.ocr_button.pack(side="left", padx=(8, 0))
+        self.import_model_button = ttk.Button(toolbar, text="모델 가져오기", command=self.import_ocr_model_package)
+        self.import_model_button.pack(side="left", padx=(8, 0))
 
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=12)
 
@@ -265,6 +285,11 @@ class AutoCropApp:
         self.save_config_button.configure(state=image_state)
         self.load_config_button.configure(state="normal")
         self.batch_button.configure(state="normal")
+        retry_state = "normal" if self.last_batch_context and self.last_batch_failures else "disabled"
+        self.retry_batch_button.configure(state=retry_state)
+        self.history_button.configure(state="normal")
+        self.ocr_button.configure(state=image_state)
+        self.import_model_button.configure(state="normal")
         self.zoom_out_button.configure(state=image_state)
         self.zoom_in_button.configure(state=image_state)
         self.zoom_reset_button.configure(state=image_state)
@@ -1253,6 +1278,13 @@ class AutoCropApp:
             messagebox.showerror("저장 실패", f"분할 저장 중 오류가 발생했습니다.\n{exc}")
             return
 
+        self._append_history_entry(
+            job_type="single",
+            source_images=[self.loaded_image.display_name],
+            output_dir=output_dir,
+            saved_paths=saved_paths,
+            rectangles_count=len(self.rectangles),
+        )
         self.status_var.set(f"{len(saved_paths)}개 조각을 저장했습니다. 저장 위치: {output_dir}")
         messagebox.showinfo(
             "분할 완료",
@@ -1274,6 +1306,8 @@ class AutoCropApp:
         saved_count = 0
         error_count = 0
         errors: list[str] = []
+        failed_paths: list[Path] = []
+        saved_paths: list[Path] = []
 
         for i, image_path in enumerate(file_list):
             try:
@@ -1317,22 +1351,99 @@ class AutoCropApp:
                     target_path = self._build_output_path(current_output_dir, f"{stem}_rect_{index:02d}", suffix)
                     self._save_cropped_image(cropped, target_path)
                     saved_count += 1
+                    saved_paths.append(target_path)
             except Exception as exc:
                 error_count += 1
+                failed_paths.append(image_path)
                 errors.append(f"{image_path.name}: {exc}")
             finally:
                 dialog.after(0, lambda p=i + 1: progress_bar.config(value=p))
 
         def show_final_message() -> None:
+            self.last_batch_context = {
+                "crop_rects": [rect for rect in crop_rects],
+                "output_dir": output_dir,
+                "source_image_size": source_image_size,
+                "create_subfolders": create_subfolders,
+            }
+            self.last_batch_failures = failed_paths
+            self._update_controls()
+
+            if saved_paths:
+                self._append_history_entry(
+                    job_type="batch",
+                    source_images=[path.name for path in file_list],
+                    output_dir=output_dir,
+                    saved_paths=saved_paths,
+                    rectangles_count=len(crop_rects),
+                )
             message = f"배치 처리가 완료되었습니다.\n\n총 {total_files}개 파일 처리 시도\n성공적으로 저장된 조각: {saved_count}개"
             if error_count > 0:
                 message += f"\n오류 발생: {error_count}개 파일"
+                message += "\n(툴바의 '실패 재시도' 버튼으로 실패 파일만 다시 실행할 수 있습니다.)"
                 if errors and len(errors) < 5:
                     message += "\n\n오류 상세:\n" + "\n".join(errors)
             messagebox.showinfo("완료", message, parent=dialog)
             dialog.destroy()
 
         dialog.after(0, show_final_message)
+
+    def retry_failed_batch_jobs(self) -> None:
+        if not self.last_batch_context or not self.last_batch_failures:
+            messagebox.showinfo("실패 재시도", "재시도할 배치 실패 이력이 없습니다.")
+            return
+
+        valid_failures = [path for path in self.last_batch_failures if path.exists() and path.is_file()]
+        if not valid_failures:
+            messagebox.showwarning("실패 재시도", "이전 실패 파일을 찾을 수 없습니다.")
+            self.last_batch_failures = []
+            self._update_controls()
+            return
+
+        output_dir_raw = self.last_batch_context.get("output_dir")
+        output_dir = output_dir_raw if isinstance(output_dir_raw, Path) else None
+        if output_dir is None or not output_dir.exists():
+            messagebox.showerror("실패 재시도", "이전 배치의 출력 폴더를 찾을 수 없습니다.")
+            return
+
+        crop_rects_raw = self.last_batch_context.get("crop_rects", [])
+        crop_rects = crop_rects_raw if isinstance(crop_rects_raw, list) else []
+        if not crop_rects:
+            messagebox.showerror("실패 재시도", "이전 배치의 분할 규칙이 없어 재시도를 진행할 수 없습니다.")
+            return
+
+        source_image_size_raw = self.last_batch_context.get("source_image_size")
+        source_image_size = source_image_size_raw if isinstance(source_image_size_raw, tuple) else None
+        create_subfolders_raw = self.last_batch_context.get("create_subfolders", True)
+        create_subfolders = bool(create_subfolders_raw)
+
+        retry_dialog = tk.Toplevel(self.root)
+        retry_dialog.title("배치 실패 재시도")
+        retry_dialog.geometry("520x160")
+        retry_dialog.transient(self.root)
+        retry_dialog.grab_set()
+
+        frame = ttk.Frame(retry_dialog, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text=f"실패 파일 {len(valid_failures)}개를 재시도합니다.").pack(anchor="w", pady=(0, 8))
+        progress_bar = ttk.Progressbar(frame, orient="horizontal", mode="determinate")
+        progress_bar.pack(fill="x", pady=(0, 8))
+        ttk.Label(frame, text="재시도 중...").pack(anchor="w")
+
+        thread = threading.Thread(
+            target=self._perform_batch_job,
+            args=(
+                retry_dialog,
+                progress_bar,
+                valid_failures,
+                crop_rects,
+                output_dir,
+                source_image_size,
+                create_subfolders,
+            ),
+            daemon=True,
+        )
+        thread.start()
 
     def _get_batch_output_suffix(self, image_path: Path) -> str:
         suffix = image_path.suffix.lower()
@@ -1382,6 +1493,526 @@ class AutoCropApp:
         if suffix in {".jpg", ".jpeg"} and image.mode not in {"RGB", "L"}:
             image = image.convert("RGB")
         image.save(target_path)
+
+    def _resolve_cpp_ocr_executable(self) -> Path:
+        candidates = [
+            Path.cwd() / "bin" / "ocr_trt_runner.exe",
+            Path.cwd() / "bin" / "ocr_trt_runner",
+            Path.cwd() / "cpp" / "ocr_engine" / "build" / "ocr_trt_runner.exe",
+            Path.cwd() / "cpp" / "ocr_engine" / "build" / "ocr_trt_runner",
+        ]
+        for path in candidates:
+            if path.exists() and path.is_file():
+                return path
+        return candidates[0]
+
+    def _validate_ocr_model_dir(self, model_dir: Path) -> tuple[bool, list[str]]:
+        missing = [name for name in REQUIRED_OCR_MODEL_FILES if not (model_dir / name).exists()]
+        return len(missing) == 0, missing
+
+    def import_ocr_model_package(self) -> None:
+        package_path = filedialog.askopenfilename(
+            title="OCR 모델 ZIP 파일 선택",
+            filetypes=[("ZIP files", "*.zip"), ("All files", "*.*")],
+        )
+        if not package_path:
+            return
+
+        destination = DEFAULT_OCR_MODEL_DIR
+        destination.mkdir(parents=True, exist_ok=True)
+
+        temp_extract_dir = Path(tempfile.mkdtemp(prefix="ocr_model_import_"))
+        try:
+            with zipfile.ZipFile(package_path, "r") as zf:
+                zf.extractall(temp_extract_dir)
+
+            candidate_dirs = [temp_extract_dir] + [p for p in temp_extract_dir.iterdir() if p.is_dir()]
+            selected_dir: Path | None = None
+            for candidate in candidate_dirs:
+                is_valid, _missing = self._validate_ocr_model_dir(candidate)
+                if is_valid:
+                    selected_dir = candidate
+                    break
+
+            if selected_dir is None:
+                messagebox.showerror(
+                    "모델 가져오기 실패",
+                    "ZIP 내부에서 detector.engine / recognizer.engine 파일을 찾지 못했습니다.",
+                )
+                return
+
+            for file_name in REQUIRED_OCR_MODEL_FILES:
+                shutil.copy2(selected_dir / file_name, destination / file_name)
+
+            self.status_var.set(f"OCR 모델 가져오기 완료: {destination}")
+            messagebox.showinfo("모델 가져오기 완료", f"모델 파일을 적용했습니다.\n{destination}")
+        except (OSError, zipfile.BadZipFile) as exc:
+            messagebox.showerror("모델 가져오기 실패", f"모델 ZIP 처리 중 오류가 발생했습니다.\n{exc}")
+        finally:
+            shutil.rmtree(temp_extract_dir, ignore_errors=True)
+
+    def run_cpp_ocr(self) -> None:
+        if not self.loaded_image:
+            messagebox.showwarning("OCR", "먼저 이미지를 불러오세요.")
+            return
+
+        if not self.rectangles:
+            messagebox.showwarning("OCR", "OCR 대상 영역이 없습니다. 사각형을 먼저 지정하세요.")
+            return
+
+        executable = self._resolve_cpp_ocr_executable()
+        if not executable.exists():
+            messagebox.showerror(
+                "OCR 실행 파일 없음",
+                (
+                    "C++ TensorRT OCR 실행 파일을 찾지 못했습니다.\n\n"
+                    f"기대 경로: {executable}\n"
+                    "먼저 cpp/ocr_engine을 빌드해 주세요."
+                ),
+            )
+            return
+
+        if not DEFAULT_OCR_MODEL_DIR.exists():
+            messagebox.showerror(
+                "OCR 모델 경로 없음",
+                (
+                    "TensorRT OCR 모델 폴더를 찾지 못했습니다.\n\n"
+                    f"기대 경로: {DEFAULT_OCR_MODEL_DIR}\n"
+                    "모델/엔진 파일을 준비해 주세요."
+                ),
+            )
+            return
+        is_valid_model, missing_files = self._validate_ocr_model_dir(DEFAULT_OCR_MODEL_DIR)
+        if not is_valid_model:
+            messagebox.showerror(
+                "OCR 모델 파일 누락",
+                (
+                    f"다음 모델 파일이 필요합니다: {', '.join(REQUIRED_OCR_MODEL_FILES)}\n"
+                    f"누락 파일: {', '.join(missing_files)}\n\n"
+                    "툴바의 '모델 가져오기'를 눌러 ZIP을 가져오세요."
+                ),
+            )
+            return
+
+        with tempfile.TemporaryDirectory(prefix="autocrop_ocr_") as temp_dir_str:
+            temp_dir = Path(temp_dir_str)
+            input_dir = temp_dir / "inputs"
+            input_dir.mkdir(parents=True, exist_ok=True)
+            output_json = temp_dir / "ocr_result.json"
+
+            for index, rectangle in enumerate(self.rectangles, start=1):
+                normalized = rectangle.normalized()
+                cropped = self.loaded_image.image.crop(
+                    (normalized.left, normalized.top, normalized.right, normalized.bottom)
+                )
+                cropped_path = input_dir / f"crop_{index:02d}.png"
+                self._save_cropped_image(cropped, cropped_path)
+
+            command = [
+                str(executable),
+                "--input-dir",
+                str(input_dir),
+                "--output-json",
+                str(output_json),
+                "--model-dir",
+                str(DEFAULT_OCR_MODEL_DIR),
+            ]
+
+            try:
+                completed = subprocess.run(command, check=False, capture_output=True, text=True)
+            except OSError as exc:
+                messagebox.showerror("OCR 실행 실패", f"OCR 엔진 실행 중 오류가 발생했습니다.\n{exc}")
+                return
+
+            if completed.returncode != 0:
+                stderr = completed.stderr.strip() or "(stderr 없음)"
+                messagebox.showerror(
+                    "OCR 실패",
+                    f"OCR 엔진이 실패했습니다 (exit code: {completed.returncode}).\n\n{stderr}",
+                )
+                return
+
+            if not output_json.exists():
+                messagebox.showerror("OCR 실패", "OCR 결과 파일(ocr_result.json)이 생성되지 않았습니다.")
+                return
+
+            try:
+                with output_json.open("r", encoding="utf-8") as fp:
+                    data = json.load(fp)
+            except (OSError, json.JSONDecodeError) as exc:
+                messagebox.showerror("OCR 실패", f"OCR 결과를 읽을 수 없습니다.\n{exc}")
+                return
+
+            lines: list[str] = []
+            structured_ocr_items: list[dict[str, object]] = []
+            if isinstance(data, dict):
+                items = data.get("results", [])
+                if isinstance(items, list):
+                    for item in items[:20]:
+                        if not isinstance(item, dict):
+                            continue
+                        file_name = str(item.get("file", "-"))
+                        text = str(item.get("text", "")).strip()
+                        confidence = item.get("confidence")
+                        conf = confidence if confidence is not None else "-"
+                        lines.append(f"{file_name} | conf={conf} | {text}")
+                        structured_ocr_items.append(
+                            {
+                                "file": file_name,
+                                "text": text,
+                                "confidence": confidence,
+                            }
+                        )
+
+            preview = "\n".join(lines) if lines else "결과를 읽었지만 표시할 OCR 항목이 없습니다."
+            self._append_history_entry(
+                job_type="ocr",
+                source_images=[self.loaded_image.display_name],
+                output_dir=DEFAULT_OCR_MODEL_DIR,
+                saved_paths=[],
+                rectangles_count=len(self.rectangles),
+                details={
+                    "ocr": {
+                        "result_file": str(output_json),
+                        "items_count": len(structured_ocr_items),
+                        "items_preview": structured_ocr_items,
+                    }
+                },
+            )
+            self.status_var.set(f"OCR 완료: {len(lines)}개 항목 미리보기 갱신")
+            messagebox.showinfo("OCR 완료", preview)
+
+    def _history_file_path(self) -> Path:
+        return Path.cwd() / HISTORY_FILENAME
+
+    def _append_history_entry(
+        self,
+        job_type: str,
+        source_images: list[str],
+        output_dir: Path,
+        saved_paths: list[Path],
+        rectangles_count: int,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        history_path = self._history_file_path()
+        entry = {
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "job_type": job_type,
+            "source_images": source_images,
+            "output_dir": str(output_dir),
+            "saved_paths": [str(path) for path in saved_paths],
+            "saved_count": len(saved_paths),
+            "rectangles_count": rectangles_count,
+        }
+        if details is not None:
+            entry["details"] = details
+        try:
+            with history_path.open("a", encoding="utf-8") as fp:
+                fp.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError:
+            self.status_var.set("분할 저장은 완료됐지만 이력 기록 파일을 저장하지 못했습니다.")
+
+    def _read_history_entries(self, limit: int = 300) -> list[dict[str, object]]:
+        history_path = self._history_file_path()
+        if not history_path.exists():
+            return []
+
+        entries: list[dict[str, object]] = []
+        try:
+            with history_path.open("r", encoding="utf-8") as fp:
+                for line in fp:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        parsed = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(parsed, dict):
+                        entries.append(parsed)
+        except OSError:
+            return []
+        return entries[-limit:][::-1]
+
+    def open_history_viewer(self) -> None:
+        entries = self._read_history_entries()
+        if not entries:
+            messagebox.showinfo("이력 뷰어", "아직 저장 이력이 없습니다.")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("크롭 이력 뷰어")
+        dialog.geometry("920x560")
+        dialog.transient(self.root)
+
+        container = ttk.Frame(dialog, padding=12)
+        container.pack(fill="both", expand=True)
+        container.rowconfigure(2, weight=1)
+        container.columnconfigure(0, weight=1)
+
+        filter_frame = ttk.Frame(container)
+        filter_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        filter_frame.columnconfigure(7, weight=1)
+
+        ttk.Label(filter_frame, text="시작일(YYYY-MM-DD)").grid(row=0, column=0, sticky="w")
+        start_date_var = tk.StringVar()
+        ttk.Entry(filter_frame, textvariable=start_date_var, width=14).grid(row=0, column=1, padx=(4, 12))
+
+        ttk.Label(filter_frame, text="종료일(YYYY-MM-DD)").grid(row=0, column=2, sticky="w")
+        end_date_var = tk.StringVar()
+        ttk.Entry(filter_frame, textvariable=end_date_var, width=14).grid(row=0, column=3, padx=(4, 12))
+
+        ttk.Label(filter_frame, text="작업유형").grid(row=0, column=4, sticky="w")
+        job_type_var = tk.StringVar(value="전체")
+        ttk.Combobox(
+            filter_frame,
+            textvariable=job_type_var,
+            values=["전체", "single", "batch", "ocr"],
+            width=10,
+            state="readonly",
+        ).grid(row=0, column=5, padx=(4, 12))
+
+        ttk.Label(filter_frame, text="OCR 텍스트 검색").grid(row=0, column=6, sticky="w")
+        ocr_query_var = tk.StringVar()
+        ttk.Entry(filter_frame, textvariable=ocr_query_var, width=24).grid(row=0, column=7, sticky="ew", padx=(4, 8))
+
+        ttk.Label(filter_frame, text="정렬").grid(row=0, column=8, sticky="w")
+        sort_var = tk.StringVar(value="최신순")
+        ttk.Combobox(
+            filter_frame,
+            textvariable=sort_var,
+            values=["최신순", "오래된순", "저장개수순"],
+            width=10,
+            state="readonly",
+        ).grid(row=0, column=9, padx=(4, 8))
+
+        preset_frame = ttk.Frame(container)
+        preset_frame.grid(row=1, column=0, sticky="w", pady=(0, 8))
+        ttk.Label(preset_frame, text="빠른 기간").pack(side="left", padx=(0, 6))
+
+        notebook = ttk.Notebook(container)
+        notebook.grid(row=2, column=0, sticky="nsew")
+
+        history_tab = ttk.Frame(notebook, padding=8)
+        history_tab.columnconfigure(0, weight=1)
+        history_tab.rowconfigure(0, weight=1)
+        notebook.add(history_tab, text="이력 목록")
+
+        list_frame = ttk.Frame(history_tab)
+        list_frame.grid(row=0, column=0, sticky="nsew")
+        list_frame.rowconfigure(0, weight=1)
+        list_frame.columnconfigure(0, weight=1)
+        listbox = Listbox(list_frame, exportselection=False)
+        listbox.grid(row=0, column=0, sticky="nsew")
+        list_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=listbox.yview)
+        list_scroll.grid(row=0, column=1, sticky="ns")
+        listbox.configure(yscrollcommand=list_scroll.set)
+
+        ocr_tab = ttk.Frame(notebook, padding=8)
+        ocr_tab.columnconfigure(0, weight=1)
+        ocr_tab.rowconfigure(1, weight=1)
+        notebook.add(ocr_tab, text="OCR 결과")
+        ocr_control_frame = ttk.Frame(ocr_tab)
+        ocr_control_frame.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        ocr_control_frame.columnconfigure(2, weight=1)
+        ttk.Label(ocr_control_frame, text="Confidence 임계값").grid(row=0, column=0, sticky="w")
+        confidence_threshold_var = tk.DoubleVar(value=0.0)
+        confidence_scale = ttk.Scale(
+            ocr_control_frame,
+            from_=0.0,
+            to=1.0,
+            variable=confidence_threshold_var,
+            orient="horizontal",
+            length=220,
+        )
+        confidence_scale.grid(row=0, column=1, padx=(8, 8), sticky="w")
+        confidence_value_label = ttk.Label(ocr_control_frame, text="0.00")
+        confidence_value_label.grid(row=0, column=2, sticky="w")
+
+        ocr_text = tk.Text(ocr_tab, wrap="word", state="disabled")
+        ocr_text.grid(row=1, column=0, sticky="nsew")
+
+        json_tab = ttk.Frame(notebook, padding=8)
+        json_tab.columnconfigure(0, weight=1)
+        json_tab.rowconfigure(0, weight=1)
+        notebook.add(json_tab, text="상세 JSON")
+        detail_text = tk.Text(json_tab, wrap="word", state="disabled")
+        detail_text.grid(row=0, column=0, sticky="nsew")
+
+        filtered_entries: list[dict[str, object]] = []
+
+        def _parse_date(date_text: str, is_end: bool) -> datetime | None:
+            value = date_text.strip()
+            if not value:
+                return None
+            try:
+                parsed = datetime.strptime(value, "%Y-%m-%d")
+            except ValueError:
+                return None
+            if is_end:
+                return parsed.replace(hour=23, minute=59, second=59)
+            return parsed
+
+        def _render_text(widget: tk.Text, value: str) -> None:
+            widget.configure(state="normal")
+            widget.delete("1.0", "end")
+            widget.insert("end", value)
+            widget.configure(state="disabled")
+
+        def _format_entry_label(entry: dict[str, object]) -> str:
+            ts = str(entry.get("timestamp", "-"))
+            job = str(entry.get("job_type", "single"))
+            if job == "ocr":
+                details = entry.get("details", {})
+                details_dict = details if isinstance(details, dict) else {}
+                ocr_info = details_dict.get("ocr", {})
+                ocr_dict = ocr_info if isinstance(ocr_info, dict) else {}
+                items_count = int(ocr_dict.get("items_count", 0) or 0)
+                return f"[{ts}] ocr / {items_count}개 텍스트"
+            count = int(entry.get("saved_count", 0) or 0)
+            return f"[{ts}] {job} / {count}개 저장"
+
+        def _match_ocr_text(entry: dict[str, object], query: str) -> bool:
+            if not query:
+                return True
+            details = entry.get("details")
+            if not isinstance(details, dict):
+                return False
+            ocr_info = details.get("ocr")
+            if not isinstance(ocr_info, dict):
+                return False
+            items = ocr_info.get("items_preview")
+            if not isinstance(items, list):
+                return False
+            lowered = query.lower()
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                text = str(item.get("text", ""))
+                if lowered in text.lower():
+                    return True
+            return False
+
+        def _apply_quick_preset(days: int) -> None:
+            today = datetime.now().date()
+            start_date = today - timedelta(days=days - 1)
+            start_date_var.set(start_date.strftime("%Y-%m-%d"))
+            end_date_var.set(today.strftime("%Y-%m-%d"))
+            refresh_history_list()
+
+        def render_selected(_event: tk.Event | None = None) -> None:
+            selected = listbox.curselection()
+            if not selected or selected[0] >= len(filtered_entries):
+                return
+            entry = filtered_entries[selected[0]]
+            _render_text(detail_text, json.dumps(entry, ensure_ascii=False, indent=2))
+
+            details = entry.get("details")
+            ocr_preview_lines: list[str] = []
+            if isinstance(details, dict):
+                ocr_info = details.get("ocr")
+                if isinstance(ocr_info, dict):
+                    items = ocr_info.get("items_preview", [])
+                    if isinstance(items, list):
+                        for idx, item in enumerate(items, start=1):
+                            if not isinstance(item, dict):
+                                continue
+                            text = str(item.get("text", "")).strip()
+                            file_name = str(item.get("file", "-"))
+                            conf = item.get("confidence")
+                            threshold = float(confidence_threshold_var.get())
+                            conf_value: float | None = None
+                            if isinstance(conf, (int, float)):
+                                conf_value = float(conf)
+                            elif isinstance(conf, str):
+                                try:
+                                    conf_value = float(conf)
+                                except ValueError:
+                                    conf_value = None
+                            if conf_value is not None and conf_value < threshold:
+                                continue
+                            low_tag = "⚠️" if conf_value is not None and conf_value < 0.5 else "✅"
+                            ocr_preview_lines.append(
+                                f"{idx:02d}. {low_tag} file={file_name} | confidence={conf if conf is not None else '-'} | {text}"
+                            )
+            ocr_text_value = (
+                "\n".join(ocr_preview_lines)
+                if ocr_preview_lines
+                else "선택된 항목에 OCR 상세 결과가 없거나 임계값 조건에 맞는 결과가 없습니다."
+            )
+            _render_text(ocr_text, ocr_text_value)
+
+        def refresh_history_list(*_args: object) -> None:
+            filtered_entries.clear()
+            listbox.delete(0, "end")
+
+            start_date = _parse_date(start_date_var.get(), is_end=False)
+            end_date = _parse_date(end_date_var.get(), is_end=True)
+            selected_job = job_type_var.get().strip()
+            query = ocr_query_var.get().strip()
+
+            for entry in entries:
+                ts_raw = str(entry.get("timestamp", ""))
+                try:
+                    entry_ts = datetime.fromisoformat(ts_raw)
+                except ValueError:
+                    entry_ts = None
+
+                if start_date and entry_ts and entry_ts < start_date:
+                    continue
+                if end_date and entry_ts and entry_ts > end_date:
+                    continue
+
+                job = str(entry.get("job_type", "single"))
+                if selected_job != "전체" and job != selected_job:
+                    continue
+
+                if query and not _match_ocr_text(entry, query):
+                    continue
+
+                filtered_entries.append(entry)
+
+            selected_sort = sort_var.get().strip()
+            if selected_sort == "오래된순":
+                filtered_entries.sort(key=lambda item: str(item.get("timestamp", "")))
+            elif selected_sort == "저장개수순":
+                filtered_entries.sort(key=lambda item: int(item.get("saved_count", 0) or 0), reverse=True)
+            else:
+                filtered_entries.sort(key=lambda item: str(item.get("timestamp", "")), reverse=True)
+
+            for idx, entry in enumerate(filtered_entries):
+                listbox.insert(idx, _format_entry_label(entry))
+
+            if filtered_entries:
+                listbox.selection_set(0)
+                render_selected()
+            else:
+                _render_text(detail_text, "필터 조건에 맞는 이력이 없습니다.")
+                _render_text(ocr_text, "선택된 OCR 이력이 없습니다.")
+
+        ttk.Button(preset_frame, text="오늘", command=lambda: _apply_quick_preset(1)).pack(side="left", padx=(0, 4))
+        ttk.Button(preset_frame, text="7일", command=lambda: _apply_quick_preset(7)).pack(side="left", padx=(0, 4))
+        ttk.Button(preset_frame, text="30일", command=lambda: _apply_quick_preset(30)).pack(side="left", padx=(0, 4))
+
+        apply_filter_btn = ttk.Button(filter_frame, text="필터 적용", command=refresh_history_list)
+        apply_filter_btn.grid(row=0, column=10, padx=(0, 6))
+        reset_filter_btn = ttk.Button(
+            filter_frame,
+            text="초기화",
+            command=lambda: (
+                start_date_var.set(""),
+                end_date_var.set(""),
+                job_type_var.set("전체"),
+                ocr_query_var.set(""),
+                sort_var.set("최신순"),
+                refresh_history_list(),
+            ),
+        )
+        reset_filter_btn.grid(row=0, column=11)
+
+        listbox.bind("<<ListboxSelect>>", render_selected)
+        confidence_scale.configure(command=lambda _value: (confidence_value_label.configure(text=f"{confidence_threshold_var.get():.2f}"), render_selected()))
+        refresh_history_list()
 
     def _event_to_image_point(self, event: tk.Event) -> tuple[int, int] | None:
         return self._canvas_point_to_image_point(event.x, event.y, clamp=True)

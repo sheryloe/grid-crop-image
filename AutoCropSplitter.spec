@@ -1,11 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs, collect_submodules
 
 datas = []
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('PIL')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+binaries += collect_dynamic_libs('PIL')
+hiddenimports += collect_submodules('PIL')
+hiddenimports += [
+    'PIL.Image',
+    'PIL.ImageTk',
+    'PIL.ImageGrab',
+    'tkinter',
+    'tkinter.ttk',
+    'tkinter.filedialog',
+    'tkinter.messagebox',
+]
 
 
 a = Analysis(

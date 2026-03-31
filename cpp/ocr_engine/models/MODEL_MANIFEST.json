@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "description": "TensorRT OCR model manifest for ocr_trt_runner",
+  "required_files": [
+    "detector.engine",
+    "recognizer.engine"
+  ],
+  "optional_files": [
+    "charset.txt"
+  ],
+  "notes": "Place serialized TensorRT engines in this directory. Use scripts/build_trt_engines.sh to generate from ONNX with trtexec."
+}
