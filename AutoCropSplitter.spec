@@ -16,6 +16,7 @@ hiddenimports += [
     'tkinter.ttk',
     'tkinter.filedialog',
     'tkinter.messagebox',
+    'gridcrop_core',
 ]
 
 

@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import json
+import queue
 import shutil
 import subprocess
-import tempfile
 import threading
+import time
 import tkinter as tk
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import Listbox
 from tkinter import filedialog, messagebox, ttk
+from typing import Callable
+
+import gridcrop_core as core
 
 PIL_IMPORT_ERROR: ImportError | None = None
 IMAGEGRAB_IMPORT_ERROR: ImportError | None = None
@@ -32,24 +36,35 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
 
 APP_TITLE = "Grid Crop Studio"
 SUPPORTED_FILE_TYPES = [
-    ("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff"),
-    ("All files", "*.*"),
+    ("그림 파일", "*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff"),
+    ("모든 파일", "*.*"),
 ]
 CONFIG_FILE_TYPES = [
-    ("JSON files", "*.json"),
-    ("All files", "*.*"),
+    ("배치 파일(JSON)", "*.json"),
+    ("모든 파일", "*.*"),
 ]
-SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
-MIN_RECT_SIZE = 4
-HANDLE_SIZE = 8  # In canvas pixels
+TEXT_FILE_TYPES = [
+    ("텍스트 파일", "*.txt"),
+    ("모든 파일", "*.*"),
+]
+SUPPORTED_IMAGE_SUFFIXES = core.SUPPORTED_IMAGE_SUFFIXES
+MIN_RECT_SIZE = core.MIN_RECT_SIZE
+HANDLE_SIZE = 8  # 화면 픽셀 기준
 MIN_ZOOM = 0.1
 MAX_ZOOM = 8.0
+MAX_DISPLAY_PIXELS = 40_000_000  # 확대해도 화면용 그림이 이 픽셀 수를 넘지 않게(메모리 보호)
 ZOOM_STEP = 1.25
 CONTROL_MASK = 0x0004
 SHIFT_MASK = 0x0001
-HISTORY_FILENAME = ".crop_history.jsonl"
-DEFAULT_OCR_MODEL_DIR = Path("cpp/ocr_engine/models")
+HISTORY_FILENAME = core.HISTORY_FILENAME
+HISTORY_PAGE_SIZE = 200
+APP_DIR = core.app_base_dir()
+DEFAULT_OCR_MODEL_DIR = APP_DIR / "cpp" / "ocr_engine" / "models"
 REQUIRED_OCR_MODEL_FILES = ("detector.engine", "recognizer.engine")
+CPP_OCR_TIMEOUT_SEC = 600
+QUICK_GRIDS = {"4칸": (2, 2), "9칸": (3, 3)}
+GRID_RULE_LABELS = {"4칸 (2×2)": (2, 2), "9칸 (3×3)": (3, 3)}
+JOB_FILTER_LABELS = {"전체": None, "한 장": "single", "여러 장": "batch", "글자 읽기": "ocr"}
 
 
 @dataclass
@@ -91,6 +106,30 @@ class CropRectangle:
             "bottom": rect.bottom,
         }
 
+    def as_tuple(self) -> core.Rect:
+        return (self.left, self.top, self.right, self.bottom)
+
+    @classmethod
+    def from_tuple(cls, rect: core.Rect) -> "CropRectangle":
+        return cls(*rect)
+
+
+@dataclass
+class BatchJob:
+    files: list[Path]
+    output_dir: Path
+    create_subfolders: bool
+    rects: list[core.Rect] | None = None
+    source_size: tuple[int, int] | None = None
+    grid: tuple[int, int] | None = None
+    detect_gutters: bool = True
+
+    def describe_rule(self) -> str:
+        if self.grid is not None:
+            rows, cols = self.grid
+            return f"AI 그림 {rows * cols}칸 자동 나누기"
+        return f"영역 {len(self.rects or [])}개"
+
 
 class AutoCropApp:
     HANDLE_CURSORS = {
@@ -107,8 +146,13 @@ class AutoCropApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title(APP_TITLE)
-        self.root.geometry("1440x940")
-        self.root.minsize(1080, 720)
+        # 작은 화면(노트북 125% 배율 등)에서도 창이 화면 밖으로 넘치지 않게 맞춘다.
+        screen_w = max(800, self.root.winfo_screenwidth())
+        screen_h = max(600, self.root.winfo_screenheight())
+        width = min(1440, screen_w - 40)
+        height = min(940, screen_h - 80)
+        self.root.geometry(f"{width}x{height}+{max(0, (screen_w - width) // 2)}+{max(0, (screen_h - height) // 3)}")
+        self.root.minsize(min(1080, width), min(640, height))
 
         self.loaded_image: LoadedImage | None = None
         self.photo_image: "ImageTk.PhotoImage | None" = None
@@ -121,8 +165,17 @@ class AutoCropApp:
         self.selected_rectangle_index: int | None = None
         self.drag_context: dict[str, object] | None = None
         self.is_configured = False
-        self.last_batch_context: dict[str, object] | None = None
+        self.last_batch_job: BatchJob | None = None
         self.last_batch_failures: list[Path] = []
+        self.data_dir = core.app_data_dir()
+        self.history_path = self.data_dir / HISTORY_FILENAME
+        self.ocr_settings_path = self.data_dir / core.OCR_SETTINGS_FILENAME
+        self.ocr_settings = core.load_ocr_settings(self.ocr_settings_path)
+        self.ocr_running = False
+        self.detect_gutters_var = tk.BooleanVar(value=True)
+        self.last_grid_message = ""
+        # 작업 스레드는 화면을 직접 만지지 않고 이 줄에 할 일을 넣는다(Tk는 주 스레드에서만).
+        self.ui_queue: "queue.Queue[Callable[[], None]]" = queue.Queue()
 
         self.zoom_var = tk.StringVar(value="100%")
         self.output_dir_var = tk.StringVar(value="아직 정하지 않음")
@@ -145,6 +198,30 @@ class AutoCropApp:
         self._bind_events()
         self._show_placeholder()
         self._update_controls()
+        self.root.after(100, self._drain_ui_queue)
+
+    # ------------------------------------------------------------------
+    # 스레드 → 화면
+    # ------------------------------------------------------------------
+
+    def _post(self, callback: Callable[[], None]) -> None:
+        self.ui_queue.put(callback)
+
+    def _drain_ui_queue(self) -> None:
+        try:
+            while True:
+                callback = self.ui_queue.get_nowait()
+                try:
+                    callback()
+                except tk.TclError:
+                    pass  # 그새 닫힌 창을 만지려던 경우
+        except queue.Empty:
+            pass
+        self.root.after(100, self._drain_ui_queue)
+
+    # ------------------------------------------------------------------
+    # 모양
+    # ------------------------------------------------------------------
 
     def _setup_styles(self) -> None:
         self.colors = {
@@ -202,7 +279,8 @@ class AutoCropApp:
         style.configure("PillMuted.TLabel", background=self.colors["cool_soft"], foreground=self.colors["cool"], padding=(10, 4), font=("Segoe UI Semibold", 9))
         style.configure("Status.TLabel", background=self.colors["hero"], foreground=self.colors["text"], padding=(12, 10))
 
-        style.configure("Action.TButton", background=self.colors["surface"], foreground=self.colors["text"], padding=(12, 9), relief="solid", borderwidth=1, font=("Segoe UI Semibold", 9))
+        # width=-2: 테마 기본값(최소 11글자 폭) 대신 글자 길이만큼만 차지해 버튼 줄이 잘리지 않게 한다.
+        style.configure("Action.TButton", background=self.colors["surface"], foreground=self.colors["text"], padding=(10, 7), width=-2, relief="solid", borderwidth=1, font=("Segoe UI Semibold", 9))
         style.map(
             "Action.TButton",
             background=[("active", "#fff2e7"), ("disabled", self.colors["surface_alt"])],
@@ -211,7 +289,7 @@ class AutoCropApp:
             lightcolor=[("active", self.colors["accent"]), ("!active", self.colors["line"])],
             darkcolor=[("active", self.colors["accent"]), ("!active", self.colors["line"])],
         )
-        style.configure("Accent.TButton", background=self.colors["accent"], foreground="#ffffff", padding=(14, 10), relief="flat", borderwidth=0, font=("Bahnschrift SemiBold", 10))
+        style.configure("Accent.TButton", background=self.colors["accent"], foreground="#ffffff", padding=(12, 8), width=-2, relief="flat", borderwidth=0, font=("Bahnschrift SemiBold", 10))
         style.map(
             "Accent.TButton",
             background=[("active", self.colors["accent_hover"]), ("disabled", "#dcb99d")],
@@ -222,6 +300,7 @@ class AutoCropApp:
         style.configure("TCombobox", padding=6, fieldbackground=self.colors["surface_alt"], foreground=self.colors["text"], arrowsize=14)
         style.map("TCombobox", fieldbackground=[("readonly", self.colors["surface_alt"])], foreground=[("readonly", self.colors["text"])])
         style.configure("TCheckbutton", background=self.colors["surface"], foreground=self.colors["text"])
+        style.configure("Card.TCheckbutton", background=self.colors["surface_alt"], foreground=self.colors["text"])
         style.configure("TRadiobutton", background=self.colors["surface"], foreground=self.colors["text"])
         style.configure("TScrollbar", background=self.colors["surface_alt"], troughcolor=self.colors["panel"], arrowsize=13)
         style.configure("Horizontal.TProgressbar", background=self.colors["accent"], troughcolor=self.colors["panel"], borderwidth=0)
@@ -245,12 +324,6 @@ class AutoCropApp:
     def _make_clickable(self, *widgets: ttk.Button) -> None:
         for widget in widgets:
             widget.configure(cursor="hand2")
-
-    def _create_info_card(self, parent: ttk.Frame, title: str, value_var: tk.StringVar) -> ttk.Frame:
-        card = ttk.Frame(parent, style="Card.TFrame", padding=(12, 12))
-        ttk.Label(card, text=title, style="CardTitle.TLabel").pack(anchor="w")
-        ttk.Label(card, textvariable=value_var, style="CardValue.TLabel", wraplength=250, justify="left").pack(anchor="w", pady=(6, 0))
-        return card
 
     def _style_dialog(self, dialog: tk.Toplevel) -> None:
         dialog.configure(bg=self.colors["bg"])
@@ -292,8 +365,8 @@ class AutoCropApp:
         wrapper.columnconfigure(1, weight=2)
         wrapper.rowconfigure(2, weight=1)
 
-        hero = ttk.Frame(wrapper, style="Hero.TFrame", padding=(22, 18))
-        hero.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
+        hero = ttk.Frame(wrapper, style="Hero.TFrame", padding=(18, 10))
+        hero.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         hero.columnconfigure(0, weight=1)
 
         hero_brand = ttk.Frame(hero, style="Hero.TFrame")
@@ -304,7 +377,7 @@ class AutoCropApp:
         ttk.Label(title_block, text=APP_TITLE, style="HeroTitle.TLabel").pack(anchor="w")
         ttk.Label(
             title_block,
-            text="여러 장 사진 자르기, 저장, 글자 읽기를 한 화면에서 빠르게 처리하는 작업 도구입니다.",
+            text="여러 장 사진 자르기, AI 그림 칸 나누기, 저장, 글자 읽기를 한 화면에서 빠르게 처리하는 작업 도구입니다.",
             style="HeroBody.TLabel",
             wraplength=840,
             justify="left",
@@ -316,10 +389,9 @@ class AutoCropApp:
         ttk.Label(hero_pills, textvariable=self.zoom_var, style="PillMuted.TLabel").pack(side="left", padx=(8, 0))
 
         action_row = ttk.Frame(wrapper, style="App.TFrame")
-        action_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 14))
-        action_row.columnconfigure(0, weight=3)
-        action_row.columnconfigure(1, weight=4)
-        action_row.columnconfigure(2, weight=3)
+        action_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        # 무리마다 버튼 수가 달라 같은 비율로 나누면 잘리므로, 필요한 만큼만 쓰고 남는 폭은 마지막 무리가 갖는다.
+        action_row.columnconfigure(2, weight=1)
 
         source_row = self._create_button_group(action_row, "IMG", "사진 가져오기")
         source_row.master.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
@@ -340,10 +412,10 @@ class AutoCropApp:
         self.retry_batch_button.pack(side="left", padx=(8, 0))
         self.history_button = ttk.Button(process_row, text="기록", command=self.open_history_viewer, style="Action.TButton")
         self.history_button.pack(side="left", padx=(8, 0))
-        self.ocr_button = ttk.Button(process_row, text="글자 읽기", command=self.run_cpp_ocr, style="Action.TButton")
+        self.ocr_button = ttk.Button(process_row, text="글자 읽기", command=self.run_ocr, style="Action.TButton")
         self.ocr_button.pack(side="left", padx=(8, 0))
-        self.import_model_button = ttk.Button(process_row, text="모델 넣기", command=self.import_ocr_model_package, style="Action.TButton")
-        self.import_model_button.pack(side="left", padx=(8, 0))
+        self.ocr_settings_button = ttk.Button(process_row, text="읽기 설정", command=self.open_ocr_settings_dialog, style="Action.TButton")
+        self.ocr_settings_button.pack(side="left", padx=(8, 0))
 
         view_row = self._create_button_group(action_row, "VIEW", "화면 조절")
         view_row.master.grid(row=0, column=2, sticky="nsew")
@@ -355,15 +427,6 @@ class AutoCropApp:
         self.zoom_reset_button.pack(side="left", padx=(8, 0))
         self.zoom_fit_button = ttk.Button(view_row, text="화면 맞춤", command=self.fit_to_view, style="Action.TButton")
         self.zoom_fit_button.pack(side="left", padx=(8, 0))
-        ttk.Separator(view_row, orient="vertical").pack(side="left", fill="y", padx=10)
-        self.delete_button = ttk.Button(view_row, text="지우기", command=self.delete_selected_rectangle, style="Action.TButton")
-        self.delete_button.pack(side="left")
-        self.clear_button = ttk.Button(view_row, text="전체 지우기", command=self.clear_rectangles, style="Action.TButton")
-        self.clear_button.pack(side="left", padx=(8, 0))
-        self.grid_button = ttk.Button(view_row, text="칸 나누기", command=self.open_grid_generator_dialog, style="Action.TButton")
-        self.grid_button.pack(side="left", padx=(8, 0))
-        self.configure_button = ttk.Button(view_row, text="확정", command=self.apply_settings, style="Action.TButton")
-        self.configure_button.pack(side="left", padx=(8, 0))
 
         canvas_shell = ttk.Frame(wrapper, style="Surface.TFrame", padding=(14, 14, 14, 14))
         canvas_shell.grid(row=2, column=0, sticky="nsew", padx=(0, 14))
@@ -374,7 +437,18 @@ class AutoCropApp:
         canvas_header.grid(row=0, column=0, sticky="ew")
         canvas_header.columnconfigure(0, weight=1)
         ttk.Label(canvas_header, textvariable=self.image_summary_var, style="PanelTitle.TLabel", justify="left").grid(row=0, column=0, sticky="w")
-        ttk.Label(canvas_header, textvariable=self.selection_summary_var, style="PillMuted.TLabel").grid(row=0, column=1, sticky="e")
+        # 영역을 다루는 버튼은 그림 바로 위에 둔다(윗줄 버튼이 좁은 창에서 잘리지 않게).
+        edit_row = ttk.Frame(canvas_header, style="Surface.TFrame")
+        edit_row.grid(row=0, column=1, sticky="e", padx=(12, 12))
+        self.delete_button = ttk.Button(edit_row, text="지우기", command=self.delete_selected_rectangle, style="Action.TButton")
+        self.delete_button.pack(side="left")
+        self.clear_button = ttk.Button(edit_row, text="전체 지우기", command=self.clear_rectangles, style="Action.TButton")
+        self.clear_button.pack(side="left", padx=(8, 0))
+        self.grid_button = ttk.Button(edit_row, text="칸 나누기", command=self.open_grid_generator_dialog, style="Action.TButton")
+        self.grid_button.pack(side="left", padx=(8, 0))
+        self.configure_button = ttk.Button(edit_row, text="확정", command=self.apply_settings, style="Action.TButton")
+        self.configure_button.pack(side="left", padx=(8, 0))
+        ttk.Label(canvas_header, textvariable=self.selection_summary_var, style="PillMuted.TLabel").grid(row=0, column=2, sticky="e")
 
         instruction_label = ttk.Label(canvas_shell, textvariable=self.instruction_var, style="Hint.TLabel", wraplength=980, justify="left")
         instruction_label.grid(row=1, column=0, sticky="ew", pady=(10, 12))
@@ -405,13 +479,10 @@ class AutoCropApp:
         sidebar.grid(row=2, column=1, sticky="nsew")
         sidebar.columnconfigure(0, weight=1)
 
-        image_card = self._create_info_card(sidebar, "현재 사진", self.image_summary_var)
-        image_card.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        selection_card = self._create_info_card(sidebar, "자르는 영역", self.selection_summary_var)
-        selection_card.grid(row=1, column=0, sticky="ew", pady=(0, 10))
-
+        # '현재 사진'·'자르는 영역'은 그림 위 머리글에 이미 보이므로 옆 칸에서는 뺐다.
+        # 작은 화면에서도 '잘라서 저장'이 보이도록 저장 폴더 → AI 칸 나누기 → 저장 버튼 → 도움말 순으로 둔다.
         output_card = ttk.Frame(sidebar, style="Card.TFrame", padding=(12, 12))
-        output_card.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        output_card.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         output_card.columnconfigure(0, weight=1)
         ttk.Label(output_card, text="저장 폴더", style="CardTitle.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(output_card, textvariable=self.output_dir_var, style="CardValue.TLabel", wraplength=250, justify="left").grid(row=1, column=0, sticky="w", pady=(6, 10))
@@ -422,20 +493,49 @@ class AutoCropApp:
         self.set_cwd_button = ttk.Button(action_bar, text="현재 폴더", command=self.set_output_to_cwd, style="Action.TButton")
         self.set_cwd_button.pack(side="left", padx=(8, 0))
 
+        quick_card = ttk.Frame(sidebar, style="Card.TFrame", padding=(12, 12))
+        quick_card.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        ttk.Label(quick_card, text="AI 그림 빠르게 나누기", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(
+            quick_card,
+            text="한 장에 4칸·9칸으로 그린 그림을 바로 나눠 저장합니다.",
+            style="SidebarHint.TLabel",
+            wraplength=250,
+            justify="left",
+        ).pack(anchor="w", pady=(6, 8))
+        quick_bar = ttk.Frame(quick_card, style="Card.TFrame")
+        quick_bar.pack(anchor="w")
+        self.quick_grid_buttons: list[ttk.Button] = []
+        for label, (rows, cols) in QUICK_GRIDS.items():
+            button = ttk.Button(
+                quick_bar,
+                text=label,
+                command=lambda r=rows, c=cols: self.quick_split(r, c),
+                style="Action.TButton",
+            )
+            button.pack(side="left", padx=(0 if not self.quick_grid_buttons else 8, 0))
+            self.quick_grid_buttons.append(button)
+        ttk.Checkbutton(
+            quick_card,
+            text="칸 사이 여백 찾아 나누기",
+            variable=self.detect_gutters_var,
+            style="Card.TCheckbutton",
+        ).pack(anchor="w", pady=(8, 0))
+
         focus_card = ttk.Frame(sidebar, style="Card.TFrame", padding=(12, 12))
-        focus_card.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        focus_card.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         ttk.Label(focus_card, text="바로 하기", style="CardTitle.TLabel").pack(anchor="w")
         ttk.Label(focus_card, textvariable=self.workspace_summary_var, style="SidebarValue.TLabel", wraplength=250, justify="left").pack(anchor="w", pady=(6, 0))
         ttk.Label(
             focus_card,
-            text="바로 가기: Ctrl+V 붙여넣기, Ctrl+휠 확대/축소, Shift 정사각형, Delete 영역 지우기",
+            text="바로 가기: Ctrl+V 붙여넣기, Ctrl+휠 확대/축소, Shift 정사각형, Delete 영역 지우기, Esc 끌기 취소",
             style="SidebarHint.TLabel",
             wraplength=250,
             justify="left",
         ).pack(anchor="w", pady=(10, 0))
 
         self.split_button = ttk.Button(sidebar, text="잘라서 저장", command=self.split_image, style="Accent.TButton")
-        self.split_button.grid(row=4, column=0, sticky="ew", pady=(4, 0))
+        self.split_button.grid(row=2, column=0, sticky="ew")
         self._make_clickable(
             self.open_button,
             self.paste_button,
@@ -445,7 +545,8 @@ class AutoCropApp:
             self.retry_batch_button,
             self.history_button,
             self.ocr_button,
-            self.import_model_button,
+            self.ocr_settings_button,
+            *self.quick_grid_buttons,
             self.zoom_out_button,
             self.zoom_in_button,
             self.zoom_reset_button,
@@ -510,11 +611,13 @@ class AutoCropApp:
         self.save_config_button.configure(state=image_state)
         self.load_config_button.configure(state="normal")
         self.batch_button.configure(state="normal")
-        retry_state = "normal" if self.last_batch_context and self.last_batch_failures else "disabled"
+        retry_state = "normal" if self.last_batch_job and self.last_batch_failures else "disabled"
         self.retry_batch_button.configure(state=retry_state)
         self.history_button.configure(state="normal")
-        self.ocr_button.configure(state=image_state)
-        self.import_model_button.configure(state="normal")
+        self.ocr_button.configure(state="disabled" if self.ocr_running else image_state)
+        self.ocr_settings_button.configure(state="normal")
+        for button in self.quick_grid_buttons:
+            button.configure(state=image_state)
         self.zoom_out_button.configure(state=image_state)
         self.zoom_in_button.configure(state=image_state)
         self.zoom_reset_button.configure(state=image_state)
@@ -549,9 +652,13 @@ class AutoCropApp:
         else:
             self.workspace_summary_var.set("먼저 사진을 넣고 저장 폴더를 정해 주세요.")
 
+    # ------------------------------------------------------------------
+    # 사진 열기·붙여넣기
+    # ------------------------------------------------------------------
+
     def open_image(self) -> None:
         path = filedialog.askopenfilename(
-            title="Select an image to crop",
+            title="자를 사진 고르기",
             filetypes=SUPPORTED_FILE_TYPES,
         )
         if not path:
@@ -562,49 +669,46 @@ class AutoCropApp:
     def paste_clipboard_image(self, _event: tk.Event | None = None) -> str | None:
         if ImageGrab is None:
             detail = f"\n{IMAGEGRAB_IMPORT_ERROR}" if IMAGEGRAB_IMPORT_ERROR else ""
-            messagebox.showerror("Paste Failed", f"Clipboard images are not available in this environment.{detail}")
+            messagebox.showerror("붙여넣기 실패", f"이 환경에서는 클립보드 그림을 쓸 수 없습니다.{detail}")
             return "break"
 
         try:
             clipboard_content = ImageGrab.grabclipboard()
         except Exception as exc:  # pragma: no cover - tkinter dialog flow
-            messagebox.showerror("Paste Failed", f"Could not read the clipboard image.\n{exc}")
+            messagebox.showerror("붙여넣기 실패", f"클립보드 그림을 읽지 못했습니다.\n{core.describe_error(exc)}")
             return "break"
 
         if isinstance(clipboard_content, list):
             image_path = self._find_first_supported_image_path(clipboard_content)
             if image_path is None:
-                messagebox.showwarning("Paste Failed", "The clipboard does not contain a supported image.")
+                messagebox.showwarning("붙여넣기 실패", "복사한 파일 중에 열 수 있는 그림 파일이 없습니다.")
                 return "break"
             self._load_image_from_path(image_path)
             return "break"
 
         if clipboard_content is None or not isinstance(clipboard_content, Image.Image):
-            messagebox.showwarning("Paste Failed", "No image is available in the clipboard.")
+            messagebox.showwarning("붙여넣기 실패", "클립보드에 그림이 없습니다. 화면을 캡처하거나 그림을 복사한 뒤 다시 눌러 주세요.")
             return "break"
 
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         save_stem = f"clipboard_{stamp}"
         copied_image = clipboard_content.copy()
-        format_name = clipboard_content.format or "PNG"
         self._load_image(
             image=copied_image,
             display_name=f"{save_stem}.png",
             save_stem=save_stem,
-            format_name=format_name,
+            format_name="PNG",  # 캡처는 손실 없는 PNG로 저장한다
             source_kind="clipboard",
             source_path=None,
         )
-        self.status_var.set(f"Clipboard image loaded: {copied_image.width} x {copied_image.height}")
+        self.status_var.set(f"클립보드 그림을 불러왔습니다: {copied_image.width} x {copied_image.height}")
         return "break"
 
     def _load_image_from_path(self, image_path: Path) -> bool:
         try:
-            with Image.open(image_path) as source_image:
-                copied_image = source_image.copy()
-                format_name = source_image.format
+            copied_image, format_name = core.open_image_file(image_path)
         except Exception as exc:  # pragma: no cover - tkinter dialog flow
-            messagebox.showerror("Open Failed", f"Could not open the image.\n{exc}")
+            messagebox.showerror("열기 실패", f"사진을 열지 못했습니다.\n{image_path.name}\n{core.describe_error(exc)}")
             return False
 
         self._load_image(
@@ -615,7 +719,7 @@ class AutoCropApp:
             source_kind="file",
             source_path=image_path,
         )
-        self.status_var.set(f"Loaded image: {image_path.name} ({copied_image.width} x {copied_image.height})")
+        self.status_var.set(f"사진을 불러왔습니다: {image_path.name} ({copied_image.width} x {copied_image.height})")
         return True
 
     def _load_image(
@@ -655,19 +759,23 @@ class AutoCropApp:
     def _find_first_supported_image_path(self, clipboard_paths: list[object]) -> Path | None:
         for raw_path in clipboard_paths:
             candidate = Path(str(raw_path))
-            if candidate.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES and candidate.exists():
+            if candidate.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES and candidate.is_file():
                 return candidate
         return None
+
+    # ------------------------------------------------------------------
+    # 저장 폴더·배치 파일
+    # ------------------------------------------------------------------
 
     def choose_output_directory(self) -> None:
         initial_dir = self.output_dir
         if initial_dir is None and self.loaded_image and self.loaded_image.path is not None:
             initial_dir = self.loaded_image.path.parent
-        if initial_dir is None:
+        if initial_dir is None or not initial_dir.is_dir():
             initial_dir = Path.cwd()
 
         selected_dir = filedialog.askdirectory(
-            title="Choose an output folder",
+            title="저장 폴더 고르기",
             initialdir=str(initial_dir),
             mustexist=True,
         )
@@ -675,19 +783,19 @@ class AutoCropApp:
             return
 
         self._set_output_dir(Path(selected_dir), user_selected=True)
-        self.status_var.set(f"Output folder set: {selected_dir}")
+        self.status_var.set(f"저장 폴더를 정했습니다: {selected_dir}")
 
     def set_output_to_cwd(self) -> None:
-        """Set the output directory to the current working directory."""
+        """저장 폴더를 지금 작업 폴더로 정한다."""
         cwd = Path.cwd()
         self._set_output_dir(cwd, user_selected=True)
-        self.status_var.set(f"Output folder set to workspace: {cwd}")
+        self.status_var.set(f"저장 폴더를 현재 폴더로 정했습니다: {cwd}")
 
     def _set_output_dir(self, path: Path | None, user_selected: bool = False) -> None:
         self.output_dir = path
         self.output_dir_is_user_selected = user_selected
         if self.output_dir is None:
-            self.output_dir_var.set("Not selected")
+            self.output_dir_var.set("아직 정하지 않음")
         else:
             self.output_dir_var.set(str(self.output_dir))
         self._update_controls()
@@ -698,7 +806,7 @@ class AutoCropApp:
 
         initial_path = self._get_default_config_path()
         target = filedialog.asksaveasfilename(
-            title="Save layout",
+            title="배치 저장",
             initialdir=str(initial_path.parent),
             initialfile=initial_path.name,
             defaultextension=".json",
@@ -723,90 +831,69 @@ class AutoCropApp:
         }
 
         try:
-            Path(target).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            core.write_text_atomic(Path(target), json.dumps(data, ensure_ascii=False, indent=2))
         except Exception as exc:  # pragma: no cover - tkinter dialog flow
-            messagebox.showerror("Save Failed", f"Could not save the layout file.\n{exc}")
+            messagebox.showerror("저장 실패", f"배치 파일을 저장하지 못했습니다.\n{core.describe_error(exc)}")
             return
 
-        self.status_var.set(f"Layout saved: {Path(target).name}")
+        self.status_var.set(f"배치를 저장했습니다: {Path(target).name}")
 
     def load_configuration(self) -> None:
-        config_path = filedialog.askopenfilename(title="Load layout", filetypes=CONFIG_FILE_TYPES)
+        config_path = filedialog.askopenfilename(title="배치 불러오기", filetypes=CONFIG_FILE_TYPES)
         if not config_path:
             return
 
         try:
-            data = json.loads(Path(config_path).read_text(encoding="utf-8"))
-        except Exception as exc:  # pragma: no cover - tkinter dialog flow
-            messagebox.showerror("Load Failed", f"Could not read the layout file.\n{exc}")
+            layout = core.load_layout_file(Path(config_path))
+        except core.LayoutError as exc:
+            messagebox.showerror("불러오기 실패", str(exc))
             return
 
-        saved_image_path = Path(data.get("image_path", "")) if data.get("image_path") else None
-        saved_image_source_kind = str(data.get("image_source_kind") or "file")
-        if saved_image_path and saved_image_path.exists():
+        saved_image_path = Path(layout.image_path) if layout.image_path else None
+        if saved_image_path and saved_image_path.is_file():
             current_image_path = self.loaded_image.path.resolve() if self.loaded_image and self.loaded_image.path else None
             if current_image_path != saved_image_path.resolve():
                 if not self._load_image_from_path(saved_image_path):
                     return
         elif not self.loaded_image:
             missing_source_message = (
-                "The layout expects a clipboard image. Paste the source image again and retry."
-                if saved_image_source_kind == "clipboard"
-                else "The layout references a source image that could not be found. Open the image first and retry."
+                "이 배치는 클립보드 그림에서 만든 것입니다. 그림을 다시 붙여넣은 뒤 불러와 주세요."
+                if layout.source_kind == "clipboard"
+                else "배치에 적힌 원본 사진을 찾을 수 없습니다. 사진을 먼저 연 뒤 다시 불러와 주세요."
             )
-            messagebox.showerror(
-                "Load Failed",
-                missing_source_message,
-            )
+            messagebox.showerror("불러오기 실패", missing_source_message)
             return
 
         assert self.loaded_image is not None
-        size_info = data.get("image_size", {})
-        saved_width = int(size_info.get("width") or self.loaded_image.width)
-        saved_height = int(size_info.get("height") or self.loaded_image.height)
-        ratio_x = self.loaded_image.width / saved_width if saved_width else 1.0
-        ratio_y = self.loaded_image.height / saved_height if saved_height else 1.0
-
-        rectangles: list[CropRectangle] = []
-        for item in data.get("rectangles", []):
-            if not isinstance(item, dict):
-                continue
-            rectangles.append(
-                CropRectangle(
-                    left=round(float(item.get("left", 0)) * ratio_x),
-                    top=round(float(item.get("top", 0)) * ratio_y),
-                    right=round(float(item.get("right", 0)) * ratio_x),
-                    bottom=round(float(item.get("bottom", 0)) * ratio_y),
-                )
-            )
-
-        self.rectangles = self._normalize_rectangles_collection(rectangles)
+        current_size = (self.loaded_image.width, self.loaded_image.height)
+        saved_size = layout.image_size or current_size
+        rects = core.scale_rects(layout.rects, saved_size, current_size)
+        self.rectangles = [CropRectangle.from_tuple(r) for r in core.clamp_rects(rects, *current_size)]
         self.selected_rectangle_index = None
         self.drag_context = None
-        self.is_configured = bool(data.get("configured")) and bool(self.rectangles)
+        self.is_configured = layout.configured and bool(self.rectangles)
 
-        saved_zoom = float(data.get("zoom") or 1.0)
-        self.zoom = self._clamp_zoom(saved_zoom)
+        self.zoom = self._clamp_zoom(layout.zoom)
         self._render_image(reset_view=True)
 
-        if saved_width != self.loaded_image.width or saved_height != self.loaded_image.height:
+        if saved_size != current_size:
             messagebox.showwarning(
-                "Layout Scaled",
-                "The source image size differs from the saved layout, so the crop coordinates were scaled to fit.",
+                "크기 맞춤",
+                "지금 사진의 크기가 배치를 저장할 때와 달라서 자를 영역을 크기에 맞게 늘이거나 줄였습니다.",
             )
 
-        saved_output_dir = Path(data.get("output_dir", "")) if data.get("output_dir") else None
-        if saved_output_dir is not None:
-            if saved_output_dir.exists() and saved_output_dir.is_dir():
+        if layout.output_dir:
+            saved_output_dir = Path(layout.output_dir)
+            if saved_output_dir.is_dir():
                 self._set_output_dir(saved_output_dir, user_selected=True)
             else:
                 self._set_output_dir(None)
                 messagebox.showwarning(
-                    "Output Folder Missing",
-                    "The saved output folder no longer exists. Choose a new output folder.",
+                    "저장 폴더 없음",
+                    "배치에 적힌 저장 폴더가 더는 없습니다. 저장 폴더를 새로 골라 주세요.",
                 )
 
-        self.status_var.set(f"Layout loaded: {Path(config_path).name}")
+        self.status_var.set(f"배치를 불러왔습니다: {Path(config_path).name} (영역 {len(self.rectangles)}개)")
         self._update_controls()
 
     def _get_default_config_path(self) -> Path:
@@ -818,29 +905,33 @@ class AutoCropApp:
         base_dir = self.output_dir if self.output_dir is not None else Path.cwd()
         return base_dir / f"{self.loaded_image.save_stem}_crop_config.json"
 
+    # ------------------------------------------------------------------
+    # 여러 장
+    # ------------------------------------------------------------------
+
     def open_batch_process_dialog(self) -> None:
         dialog = tk.Toplevel(self.root)
         dialog.title("여러 장 자르기")
-        dialog.geometry("800x600")
-        dialog.minsize(640, 480)
+        dialog.geometry("820x640")
+        dialog.minsize(660, 520)
         dialog.transient(self.root)
         dialog.grab_set()
         self._style_dialog(dialog)
 
-        # --- Variables ---
         config_source_var = tk.StringVar(value="current")
         json_path_var = tk.StringVar()
+        grid_rule_var = tk.StringVar(value=next(iter(GRID_RULE_LABELS)))
+        batch_gutter_var = tk.BooleanVar(value=self.detect_gutters_var.get())
         batch_output_dir_var = tk.StringVar()
         create_subfolder_var = tk.BooleanVar(value=True)
         file_list: list[Path] = []
+        running = {"value": False}
 
-        # --- Main frame ---
         main_frame = ttk.Frame(dialog, padding=15)
         main_frame.pack(fill="both", expand=True)
         main_frame.rowconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
 
-        # --- File List Frame ---
         files_frame = ttk.LabelFrame(main_frame, text="처리할 파일 목록", padding=10)
         files_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
         files_frame.rowconfigure(0, weight=1)
@@ -863,49 +954,51 @@ class AutoCropApp:
         list_xscroll.grid(row=1, column=0, sticky="ew")
         file_listbox.configure(xscrollcommand=list_xscroll.set)
 
+        count_var = tk.StringVar(value="0개")
+        ttk.Label(files_frame, textvariable=count_var).grid(row=1, column=0, sticky="w", pady=(6, 0))
+
         def update_file_listbox() -> None:
             file_listbox.delete(0, "end")
             for f in file_list:
                 file_listbox.insert("end", str(f))
+            count_var.set(f"{len(file_list)}개")
+
+        def add_paths(paths: list[Path]) -> None:
+            current = set(file_list)
+            file_list.extend(p for p in sorted(set(paths)) if p not in current)
+            update_file_listbox()
 
         def add_files() -> None:
             paths = filedialog.askopenfilenames(
-                title="처리할 이미지들을 선택하세요",
+                title="처리할 사진 고르기",
                 filetypes=SUPPORTED_FILE_TYPES,
                 parent=dialog,
             )
-            if not paths:
-                return
-
-            new_paths = {Path(p) for p in paths}
-            current_paths = set(file_list)
-            file_list.extend(sorted(list(new_paths - current_paths)))
-            update_file_listbox()
+            if paths:
+                add_paths([Path(p) for p in paths])
 
         def add_folder() -> None:
             dir_path = filedialog.askdirectory(
-                title="이미지가 포함된 폴더를 선택하세요",
+                title="사진이 든 폴더 고르기",
                 mustexist=True,
                 parent=dialog,
             )
             if not dir_path:
                 return
-
-            folder_path = Path(dir_path)
-            new_paths = set()
-            for suffix in SUPPORTED_IMAGE_SUFFIXES:
-                new_paths.update(folder_path.rglob(f"*{suffix.lower()}"))
-                new_paths.update(folder_path.rglob(f"*{suffix.upper()}"))
-
-            current_paths = set(file_list)
-            file_list.extend(sorted(list(new_paths - current_paths)))
-            update_file_listbox()
+            try:
+                found = core.collect_images_in_folder(Path(dir_path))
+            except OSError as exc:
+                messagebox.showerror("폴더 읽기 실패", core.describe_error(exc), parent=dialog)
+                return
+            if not found:
+                messagebox.showinfo("폴더 넣기", "이 폴더에는 넣을 사진이 없습니다(앞서 잘라 저장한 조각은 뺍니다).", parent=dialog)
+                return
+            add_paths(found)
 
         def remove_selected() -> None:
             selected_indices = file_listbox.curselection()
             if not selected_indices:
                 return
-
             for i in sorted(selected_indices, reverse=True):
                 del file_list[i]
             update_file_listbox()
@@ -922,164 +1015,316 @@ class AutoCropApp:
         ttk.Button(file_buttons_frame, text="선택 빼기", command=remove_selected).pack(fill="x", pady=(10, 2))
         ttk.Button(file_buttons_frame, text="전부 비우기", command=clear_all).pack(fill="x", pady=2)
 
-        # --- Config Frame ---
         config_frame = ttk.LabelFrame(main_frame, text="적용할 분할 규칙", padding=10)
         config_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         config_frame.columnconfigure(1, weight=1)
 
         def browse_json() -> None:
-            path = filedialog.askopenfilename(title="설정 파일 불러오기", filetypes=CONFIG_FILE_TYPES, parent=dialog)
+            path = filedialog.askopenfilename(title="배치 파일 고르기", filetypes=CONFIG_FILE_TYPES, parent=dialog)
             if path:
                 json_path_var.set(path)
 
-        def toggle_json_input(*_: object) -> None:
-            is_json_mode = config_source_var.get() == "json"
-            state = "normal" if is_json_mode else "disabled"
-            json_path_entry.config(state="readonly" if is_json_mode else "disabled")
-            json_browse_button.config(state=state)
+        def toggle_inputs(*_: object) -> None:
+            mode = config_source_var.get()
+            json_path_entry.config(state="readonly" if mode == "json" else "disabled")
+            json_browse_button.config(state="normal" if mode == "json" else "disabled")
+            grid_combo.config(state="readonly" if mode == "grid" else "disabled")
+            gutter_check.config(state="normal" if mode == "grid" else "disabled")
 
         current_settings_radio = ttk.Radiobutton(
-            config_frame, text="현재 창의 분할 설정 사용", variable=config_source_var, value="current", command=toggle_json_input
+            config_frame, text="지금 창에서 확정한 영역 쓰기", variable=config_source_var, value="current", command=toggle_inputs
         )
         current_settings_radio.grid(row=0, column=0, columnspan=3, sticky="w")
 
-        if not self.is_configured or not self.rectangles:
+        if not self.is_configured or not self.rectangles or not self.loaded_image:
             current_settings_radio.config(state="disabled")
-            config_source_var.set("json")
+            config_source_var.set("grid")
 
         json_settings_radio = ttk.Radiobutton(
-            config_frame, text="JSON 설정 파일 사용:", variable=config_source_var, value="json", command=toggle_json_input
+            config_frame, text="저장한 배치 파일 쓰기:", variable=config_source_var, value="json", command=toggle_inputs
         )
         json_settings_radio.grid(row=1, column=0, sticky="w", pady=(5, 0))
         json_path_entry = ttk.Entry(config_frame, textvariable=json_path_var, state="disabled")
         json_path_entry.grid(row=1, column=1, sticky="ew", padx=(5, 5), pady=(5, 0))
         json_browse_button = ttk.Button(config_frame, text="파일 찾기", command=browse_json, state="disabled")
         json_browse_button.grid(row=1, column=2, sticky="w", pady=(5, 0))
-        toggle_json_input()
 
-        # --- Output Frame ---
+        grid_radio = ttk.Radiobutton(
+            config_frame, text="AI 그림 자동 나누기:", variable=config_source_var, value="grid", command=toggle_inputs
+        )
+        grid_radio.grid(row=2, column=0, sticky="w", pady=(5, 0))
+        grid_options = ttk.Frame(config_frame)
+        grid_options.grid(row=2, column=1, columnspan=2, sticky="w", padx=(5, 0), pady=(5, 0))
+        grid_combo = ttk.Combobox(grid_options, textvariable=grid_rule_var, values=list(GRID_RULE_LABELS), width=12, state="readonly")
+        grid_combo.pack(side="left")
+        gutter_check = ttk.Checkbutton(grid_options, text="사진마다 칸 사이 여백 찾기", variable=batch_gutter_var)
+        gutter_check.pack(side="left", padx=(10, 0))
+        toggle_inputs()
+
         output_frame = ttk.LabelFrame(main_frame, text="결과물 저장 위치", padding=10)
         output_frame.grid(row=2, column=0, sticky="ew", pady=(0, 10))
         output_frame.columnconfigure(0, weight=1)
 
         def choose_batch_output_dir() -> None:
-            path = filedialog.askdirectory(title="결과물을 저장할 폴더를 선택하세요", mustexist=True, parent=dialog)
+            path = filedialog.askdirectory(title="결과물을 저장할 폴더 고르기", mustexist=True, parent=dialog)
             if path:
                 batch_output_dir_var.set(path)
 
         ttk.Label(output_frame, textvariable=batch_output_dir_var).grid(row=0, column=0, sticky="ew", padx=(0, 5))
-        batch_output_dir_var.set(str(self.output_dir) if self.output_dir else "폴더를 선택하세요...")
+        batch_output_dir_var.set(str(self.output_dir) if self.output_dir else "")
         ttk.Button(output_frame, text="폴더 고르기", command=choose_batch_output_dir).grid(row=0, column=1, sticky="e")
 
         subfolder_checkbox = ttk.Checkbutton(
             output_frame,
-            text="각 원본 이미지 이름으로 하위 폴더 생성",
+            text="원본 사진 이름으로 하위 폴더 만들기",
             variable=create_subfolder_var,
         )
         subfolder_checkbox.grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 0))
 
-        # --- Action Frame ---
         action_frame = ttk.Frame(main_frame)
         action_frame.grid(row=3, column=0, sticky="sew", pady=(10, 0))
         action_frame.columnconfigure(0, weight=1)
 
         progress_bar = ttk.Progressbar(action_frame, orient="horizontal", mode="determinate")
-        progress_bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        progress_bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        progress_text_var = tk.StringVar(value="")
+        ttk.Label(action_frame, textvariable=progress_text_var).grid(row=1, column=0, sticky="w")
 
         action_buttons_frame = ttk.Frame(action_frame)
-        action_buttons_frame.grid(row=1, column=0, columnspan=2, sticky="e")
+        action_buttons_frame.grid(row=1, column=1, sticky="e")
+
+        def on_close() -> None:
+            if running["value"]:
+                progress_text_var.set("작업이 끝날 때까지 창을 닫을 수 없습니다.")
+                return
+            dialog.destroy()
+
+        dialog.protocol("WM_DELETE_WINDOW", on_close)
 
         def start_batch_processing() -> None:
             if not file_list:
-                messagebox.showerror("오류", "처리할 파일이 없습니다. 목록에 파일을 추가하세요.", parent=dialog)
+                messagebox.showerror("여러 장", "처리할 파일이 없습니다. 목록에 사진을 넣어 주세요.", parent=dialog)
                 return
 
-            output_dir_str = batch_output_dir_var.get()
-            if not output_dir_str or "폴더를 선택하세요" in output_dir_str:
-                messagebox.showerror("오류", "결과물을 저장할 폴더를 선택하세요.", parent=dialog)
+            output_dir_str = batch_output_dir_var.get().strip()
+            if not output_dir_str:
+                messagebox.showerror("여러 장", "결과물을 저장할 폴더를 골라 주세요.", parent=dialog)
                 return
 
             output_dir = Path(output_dir_str)
             if not output_dir.is_dir():
-                messagebox.showerror("오류", "선택한 저장 폴더가 유효하지 않습니다.", parent=dialog)
+                messagebox.showerror("여러 장", "고른 저장 폴더가 없습니다. 다시 골라 주세요.", parent=dialog)
                 return
 
-            crop_rects: list[CropRectangle] | None = None
-            source_image_size: tuple[int, int] | None = None
-
+            job = BatchJob(files=list(file_list), output_dir=output_dir, create_subfolders=create_subfolder_var.get())
             source = config_source_var.get()
             if source == "current":
-                if not self.is_configured or not self.rectangles:
-                    messagebox.showerror("오류", "현재 창에 유효한 분할 설정이 없습니다.", parent=dialog)
+                if not self.is_configured or not self.rectangles or not self.loaded_image:
+                    messagebox.showerror("여러 장", "지금 창에 확정한 영역이 없습니다.", parent=dialog)
                     return
-                crop_rects = self.rectangles
-
+                job.rects = [r.as_tuple() for r in self.rectangles]
+                # 지금 사진과 크기가 다른 사진에는 영역을 비율대로 맞춘다.
+                job.source_size = (self.loaded_image.width, self.loaded_image.height)
             elif source == "json":
-                json_path_str = json_path_var.get()
+                json_path_str = json_path_var.get().strip()
                 if not json_path_str:
-                    messagebox.showerror("오류", "사용할 JSON 설정 파일을 선택하세요.", parent=dialog)
+                    messagebox.showerror("여러 장", "쓸 배치 파일을 골라 주세요.", parent=dialog)
                     return
-
-                json_path = Path(json_path_str)
-                if not json_path.is_file():
-                    messagebox.showerror("오류", "선택한 JSON 파일이 존재하지 않습니다.", parent=dialog)
-                    return
-
                 try:
-                    data = json.loads(json_path.read_text(encoding="utf-8"))
-                    rect_data = data.get("rectangles", [])
-                    if not rect_data:
-                        raise ValueError("JSON 파일에 사각형 정보가 없습니다.")
-
-                    crop_rects = [
-                        CropRectangle(
-                            left=int(item.get("left", 0)),
-                            top=int(item.get("top", 0)),
-                            right=int(item.get("right", 0)),
-                            bottom=int(item.get("bottom", 0)),
-                        )
-                        for item in rect_data
-                    ]
-
-                    size_info = data.get("image_size", {})
-                    saved_width = int(size_info.get("width", 0))
-                    saved_height = int(size_info.get("height", 0))
-                    if saved_width <= 0 or saved_height <= 0:
-                        raise ValueError("JSON 파일에 유효한 이미지 크기 정보가 없습니다.")
-                    source_image_size = (saved_width, saved_height)
-
-                except Exception as exc:
-                    messagebox.showerror("JSON 오류", f"JSON 파일을 읽는 중 오류가 발생했습니다.\n{exc}", parent=dialog)
+                    layout = core.load_layout_file(Path(json_path_str), require_size=True)
+                except core.LayoutError as exc:
+                    messagebox.showerror("배치 파일 오류", str(exc), parent=dialog)
                     return
+                job.rects = layout.rects
+                job.source_size = layout.image_size
+            else:
+                job.grid = GRID_RULE_LABELS.get(grid_rule_var.get(), (2, 2))
+                job.detect_gutters = batch_gutter_var.get()
 
-            if not crop_rects:
-                messagebox.showerror("오류", "적용할 분할 규칙을 가져올 수 없습니다.", parent=dialog)
-                return
-
+            running["value"] = True
             start_button.config(state="disabled")
             close_button.config(state="disabled")
+            progress_bar.config(maximum=len(job.files), value=0)
+            progress_text_var.set(f"0 / {len(job.files)}")
 
-            thread = threading.Thread(
-                target=self._perform_batch_job,
-                args=(
-                    dialog,
-                    progress_bar,
-                    file_list,
-                    crop_rects,
-                    output_dir,
-                    source_image_size,
-                    create_subfolder_var.get(),
-                ),
-                daemon=True,
-            )
-            thread.start()
+            def on_progress(done: int, total: int) -> None:
+                progress_bar.config(value=done)
+                progress_text_var.set(f"{done} / {total}")
+
+            def on_done() -> None:
+                running["value"] = False
+                if dialog.winfo_exists():
+                    dialog.destroy()
+
+            self._start_batch_job(job, on_progress, on_done, parent=dialog)
 
         start_button = ttk.Button(action_buttons_frame, text="여러 장 저장", command=start_batch_processing)
         start_button.pack(side="left", padx=5)
-        close_button = ttk.Button(action_buttons_frame, text="창 닫기", command=dialog.destroy)
+        close_button = ttk.Button(action_buttons_frame, text="창 닫기", command=on_close)
         close_button.pack(side="left", padx=5)
 
         dialog.wait_window()
+
+    def _start_batch_job(
+        self,
+        job: BatchJob,
+        on_progress: Callable[[int, int], None],
+        on_done: Callable[[], None],
+        parent: tk.Misc,
+    ) -> None:
+        def worker() -> None:
+            result = self._perform_batch_job(job, lambda done, total: self._post(lambda: on_progress(done, total)))
+            self._post(lambda: self._finish_batch_job(job, result, parent, on_done))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _perform_batch_job(
+        self,
+        job: BatchJob,
+        report_progress: Callable[[int, int], None] | None = None,
+    ) -> dict[str, object]:
+        """작업 스레드에서 돈다. 화면은 만지지 않는다."""
+        total_files = len(job.files)
+        saved_paths: list[Path] = []
+        failed_paths: list[Path] = []
+        errors: list[str] = []
+        gutter_misses = 0
+
+        for i, image_path in enumerate(job.files):
+            try:
+                current_image, format_name = core.open_image_file(image_path)
+                width, height = current_image.size
+                if job.grid is not None:
+                    split = core.split_grid_auto(current_image, job.grid[0], job.grid[1], job.detect_gutters)
+                    if job.detect_gutters and split.gutters_found < split.gutters_expected:
+                        gutter_misses += 1
+                    rects = core.clamp_rects(split.rects, width, height)
+                else:
+                    rects = list(job.rects or [])
+                    if job.source_size is not None:
+                        rects = core.scale_rects(rects, job.source_size, (width, height))
+                    rects = core.clamp_rects(rects, width, height)
+
+                if not rects:
+                    raise ValueError("크기를 맞추고 나니 남는 영역이 없습니다.")
+
+                stem = image_path.stem
+                suffix = self._get_batch_output_suffix(image_path, format_name)
+
+                current_output_dir = job.output_dir
+                if job.create_subfolders:
+                    current_output_dir = job.output_dir / stem
+                    current_output_dir.mkdir(parents=True, exist_ok=True)
+
+                icc = current_image.info.get("icc_profile")
+                for index, rect in enumerate(rects, start=1):
+                    cropped = current_image.crop(rect)
+                    target_path = core.build_output_path(current_output_dir, f"{stem}_rect_{index:02d}", suffix)
+                    core.save_image(cropped, target_path, icc)
+                    saved_paths.append(target_path)
+            except Exception as exc:
+                failed_paths.append(image_path)
+                errors.append(f"{image_path.name}: {core.describe_error(exc)}")
+            finally:
+                if report_progress is not None:
+                    report_progress(i + 1, total_files)
+
+        return {
+            "total": total_files,
+            "saved_paths": saved_paths,
+            "failed_paths": failed_paths,
+            "errors": errors,
+            "gutter_misses": gutter_misses,
+        }
+
+    def _finish_batch_job(self, job: BatchJob, result: dict[str, object], parent: tk.Misc, on_done: Callable[[], None]) -> None:
+        saved_paths: list[Path] = result["saved_paths"]  # type: ignore[assignment]
+        failed_paths: list[Path] = result["failed_paths"]  # type: ignore[assignment]
+        errors: list[str] = result["errors"]  # type: ignore[assignment]
+
+        self.last_batch_job = job
+        self.last_batch_failures = failed_paths
+        self._update_controls()
+
+        if saved_paths:
+            self._append_history_entry(
+                job_type="batch",
+                source_images=[path.name for path in job.files],
+                output_dir=job.output_dir,
+                saved_paths=saved_paths,
+                rectangles_count=len(job.rects or []) if job.grid is None else job.grid[0] * job.grid[1],
+                details={"rule": job.describe_rule(), "failed": [str(p) for p in failed_paths[:50]]},
+            )
+
+        message = f"여러 장 작업이 끝났습니다.\n\n시도한 사진: {result['total']}장\n저장한 조각: {len(saved_paths)}개"
+        if job.grid is not None and job.detect_gutters and result.get("gutter_misses"):
+            message += f"\n칸 사이 여백을 다 찾지 못해 같은 간격으로 자른 사진: {result['gutter_misses']}장"
+        if failed_paths:
+            message += f"\n실패한 사진: {len(failed_paths)}장"
+            message += "\n위쪽 '다시' 버튼으로 실패한 사진만 다시 돌릴 수 있습니다."
+            if errors:
+                shown = errors[:5]
+                message += "\n\n실패 이유:\n" + "\n".join(shown)
+                if len(errors) > len(shown):
+                    message += f"\n…그 밖에 {len(errors) - len(shown)}건"
+        self.status_var.set(f"여러 장 작업 끝: 조각 {len(saved_paths)}개 저장, 실패 {len(failed_paths)}장")
+        on_done()
+        messagebox.showinfo("여러 장 작업 끝", message, parent=self.root)
+
+    def retry_failed_batch_jobs(self) -> None:
+        if not self.last_batch_job or not self.last_batch_failures:
+            messagebox.showinfo("다시", "다시 돌릴 실패한 사진이 없습니다.")
+            return
+
+        valid_failures = [path for path in self.last_batch_failures if path.is_file()]
+        if not valid_failures:
+            messagebox.showwarning("다시", "실패했던 사진 파일을 더는 찾을 수 없습니다.")
+            self.last_batch_failures = []
+            self._update_controls()
+            return
+
+        previous = self.last_batch_job
+        if not previous.output_dir.is_dir():
+            messagebox.showerror("다시", "지난번 저장 폴더를 찾을 수 없습니다. '여러 장'에서 새로 돌려 주세요.")
+            return
+
+        job = replace(previous, files=valid_failures)
+
+        retry_dialog = tk.Toplevel(self.root)
+        retry_dialog.title("실패한 사진 다시")
+        retry_dialog.geometry("520x160")
+        retry_dialog.transient(self.root)
+        retry_dialog.grab_set()
+        retry_dialog.protocol("WM_DELETE_WINDOW", lambda: None)  # 끝날 때까지 닫지 않는다
+        self._style_dialog(retry_dialog)
+
+        frame = ttk.Frame(retry_dialog, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text=f"실패했던 사진 {len(valid_failures)}장을 다시 처리합니다.").pack(anchor="w", pady=(0, 8))
+        progress_bar = ttk.Progressbar(frame, orient="horizontal", mode="determinate", maximum=len(valid_failures))
+        progress_bar.pack(fill="x", pady=(0, 8))
+        progress_text_var = tk.StringVar(value="처리하는 중…")
+        ttk.Label(frame, textvariable=progress_text_var).pack(anchor="w")
+
+        def on_progress(done: int, total: int) -> None:
+            progress_bar.config(value=done)
+            progress_text_var.set(f"처리하는 중… {done} / {total}")
+
+        def on_done() -> None:
+            if retry_dialog.winfo_exists():
+                retry_dialog.destroy()
+
+        self._start_batch_job(job, on_progress, on_done, parent=retry_dialog)
+
+    def _get_batch_output_suffix(self, image_path: Path, format_name: str | None = None) -> str:
+        suffix = image_path.suffix.lower()
+        if suffix in SUPPORTED_IMAGE_SUFFIXES:
+            return suffix
+        return core.suffix_from_format(format_name)
+
+    # ------------------------------------------------------------------
+    # 확대·축소
+    # ------------------------------------------------------------------
 
     def zoom_by(self, factor: float, focus_event: tk.Event | None = None) -> None:
         if not self.loaded_image:
@@ -1131,7 +1376,11 @@ class AutoCropApp:
         )
 
     def _clamp_zoom(self, value: float) -> float:
-        return max(MIN_ZOOM, min(MAX_ZOOM, value))
+        upper = MAX_ZOOM
+        if self.loaded_image is not None:
+            pixels = max(1, self.loaded_image.width * self.loaded_image.height)
+            upper = min(MAX_ZOOM, max(MIN_ZOOM, (MAX_DISPLAY_PIXELS / pixels) ** 0.5))
+        return max(MIN_ZOOM, min(upper, value))
 
     def _render_image(
         self,
@@ -1185,15 +1434,12 @@ class AutoCropApp:
         left = min(max(desired_left, 0), max_left)
         top = min(max(desired_top, 0), max_top)
 
-        if display_width > 0:
-            self.canvas.xview_moveto(left / display_width)
-        else:
-            self.canvas.xview_moveto(0)
+        self.canvas.xview_moveto(left / display_width if display_width > 0 else 0)
+        self.canvas.yview_moveto(top / display_height if display_height > 0 else 0)
 
-        if display_height > 0:
-            self.canvas.yview_moveto(top / display_height)
-        else:
-            self.canvas.yview_moveto(0)
+    # ------------------------------------------------------------------
+    # 마우스
+    # ------------------------------------------------------------------
 
     def on_motion(self, event: tk.Event) -> None:
         if self.drag_context:
@@ -1228,7 +1474,6 @@ class AutoCropApp:
 
         x, y = point
 
-        # Check for resize handle press on the selected rectangle
         if self.selected_rectangle_index is not None:
             handle_pos = self._find_handle_at(x, y)
             if handle_pos:
@@ -1239,7 +1484,7 @@ class AutoCropApp:
                     "origin": self.rectangles[self.selected_rectangle_index].normalized(),
                     "shift_pressed": (event.state & SHIFT_MASK) != 0,
                 }
-                self.status_var.set("Resizing the selected crop region.")
+                self.status_var.set("고른 영역의 크기를 바꾸는 중입니다.")
                 self._update_controls()
                 return
 
@@ -1255,7 +1500,7 @@ class AutoCropApp:
                 "start_y": y,
                 "origin": rectangle,
             }
-            self.status_var.set("Moving the selected crop region.")
+            self.status_var.set("고른 영역을 옮기는 중입니다.")
         else:
             self.rectangles.append(CropRectangle(x, y, x, y))
             self.selected_rectangle_index = len(self.rectangles) - 1
@@ -1265,7 +1510,7 @@ class AutoCropApp:
                 "shift_pressed": (event.state & SHIFT_MASK) != 0,
             }
             self.is_configured = False
-            self.status_var.set("Drawing a new crop region. Release the mouse to place it.")
+            self.status_var.set("새 영역을 그리는 중입니다. 마우스를 놓으면 자리 잡습니다.")
 
         self._refresh_overlays()
         self._update_controls()
@@ -1326,10 +1571,10 @@ class AutoCropApp:
         if normalized is None:
             del self.rectangles[self.selected_rectangle_index]
             self.selected_rectangle_index = None
-            self.status_var.set("Very small crop regions are removed automatically.")
+            self.status_var.set("너무 작은 영역은 저절로 지워집니다.")
         else:
             self.rectangles[self.selected_rectangle_index] = normalized
-            self.status_var.set("Crop region updated. Keep editing or confirm the layout.")
+            self.status_var.set("영역을 바꿨습니다. 더 고치거나 '확정'을 누르세요.")
 
         self.drag_context = None
         self._refresh_overlays()
@@ -1351,20 +1596,32 @@ class AutoCropApp:
         self.delete_selected_rectangle()
 
     def on_mousewheel(self, event: tk.Event) -> None:
+        delta = getattr(event, "delta", 0) or 0
+        if delta == 0:
+            return
+        # 터치패드는 120보다 작은 값을 보내므로 최소 한 칸은 움직이게 한다.
+        steps = int(-delta / 120) or (-1 if delta > 0 else 1)
+
         if event.state & CONTROL_MASK:
-            self.zoom_by(ZOOM_STEP if event.delta > 0 else 1 / ZOOM_STEP, focus_event=event)
+            self.zoom_by(ZOOM_STEP if delta > 0 else 1 / ZOOM_STEP, focus_event=event)
             return
 
         if event.state & SHIFT_MASK:
-            self.canvas.xview_scroll(int(-event.delta / 120), "units")
+            self.canvas.xview_scroll(steps, "units")
             return
 
-        self.canvas.yview_scroll(int(-event.delta / 120), "units")
+        self.canvas.yview_scroll(steps, "units")
 
     def cancel_current_drag(self) -> None:
-        if self.drag_context and self.drag_context.get("kind") == "create" and self.selected_rectangle_index is not None:
-            del self.rectangles[self.selected_rectangle_index]
-            self.selected_rectangle_index = None
+        context = self.drag_context
+        if context and self.selected_rectangle_index is not None:
+            kind = context.get("kind")
+            if kind == "create":
+                del self.rectangles[self.selected_rectangle_index]
+                self.selected_rectangle_index = None
+            elif kind in {"move", "resize"} and isinstance(context.get("origin"), CropRectangle):
+                self.rectangles[self.selected_rectangle_index] = context["origin"]  # type: ignore[assignment]
+            self.status_var.set("끌던 것을 취소했습니다.")
             self._refresh_overlays()
 
         self.drag_context = None
@@ -1380,7 +1637,7 @@ class AutoCropApp:
         self.is_configured = False
         self._refresh_overlays()
         self._update_controls()
-        self.status_var.set("Selected crop region deleted.")
+        self.status_var.set("고른 영역을 지웠습니다.")
 
     def clear_rectangles(self) -> None:
         if not self.loaded_image:
@@ -1392,7 +1649,11 @@ class AutoCropApp:
         self.is_configured = False
         self._refresh_overlays()
         self._update_controls()
-        self.status_var.set("All crop regions cleared.")
+        self.status_var.set("영역을 모두 지웠습니다.")
+
+    # ------------------------------------------------------------------
+    # 칸 나누기
+    # ------------------------------------------------------------------
 
     def open_grid_generator_dialog(self) -> None:
         if not self.loaded_image:
@@ -1400,7 +1661,7 @@ class AutoCropApp:
 
         dialog = tk.Toplevel(self.root)
         dialog.title("칸 나누기")
-        dialog.geometry("320x200")
+        dialog.geometry("360x250")
         dialog.resizable(False, False)
         dialog.transient(self.root)
         dialog.grab_set()
@@ -1410,80 +1671,113 @@ class AutoCropApp:
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(1, weight=1)
 
-        ttk.Label(frame, text="Rows").grid(row=0, column=0, sticky="w", pady=5)
+        ttk.Label(frame, text="가로줄 수(행)").grid(row=0, column=0, sticky="w", pady=5)
         rows_var = tk.StringVar(value="2")
         rows_entry = ttk.Entry(frame, textvariable=rows_var, width=10)
         rows_entry.grid(row=0, column=1, sticky="ew", padx=(10, 0))
 
-        ttk.Label(frame, text="Columns").grid(row=1, column=0, sticky="w", pady=5)
+        ttk.Label(frame, text="세로줄 수(열)").grid(row=1, column=0, sticky="w", pady=5)
         cols_var = tk.StringVar(value="2")
         cols_entry = ttk.Entry(frame, textvariable=cols_var, width=10)
         cols_entry.grid(row=1, column=1, sticky="ew", padx=(10, 0))
 
-        ttk.Label(frame, text="Padding (px)").grid(row=2, column=0, sticky="w", pady=5)
+        ttk.Label(frame, text="칸 사이 여백(픽셀)").grid(row=2, column=0, sticky="w", pady=5)
         padding_var = tk.StringVar(value="0")
         padding_entry = ttk.Entry(frame, textvariable=padding_var, width=10)
         padding_entry.grid(row=2, column=1, sticky="ew", padx=(10, 0))
 
-        button_frame = ttk.Frame(frame)
-        button_frame.grid(row=3, column=0, columnspan=2, pady=(20, 0))
+        auto_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            frame,
+            text="여백 자동 찾기(AI 그림용, 위 여백 값은 쓰지 않음)",
+            variable=auto_var,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
-        def on_generate() -> None:
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=4, column=0, columnspan=2, pady=(16, 0))
+
+        def on_generate(_event: tk.Event | None = None) -> None:
             try:
-                rows = int(rows_var.get())
-                cols = int(cols_var.get())
-                padding = int(padding_var.get())
-                if rows <= 0 or cols <= 0 or padding < 0:
-                    raise ValueError("Values must be positive.")
+                rows = int(rows_var.get().strip())
+                cols = int(cols_var.get().strip())
+                padding = int(padding_var.get().strip() or "0")
+                if rows <= 0 or cols <= 0 or padding < 0 or rows > 50 or cols > 50:
+                    raise ValueError
             except ValueError:
-                messagebox.showerror("Input Error", "Enter valid positive integers for rows, columns, and padding.", parent=dialog)
+                messagebox.showerror("입력 오류", "행·열은 1~50, 여백은 0 이상의 정수로 넣어 주세요.", parent=dialog)
                 return
 
-            self.generate_grid_rectangles(rows, cols, padding)
-            dialog.destroy()
+            if auto_var.get():
+                ok = self._apply_auto_grid(rows, cols, detect_gutters=True, confirm=False)
+            else:
+                ok = self.generate_grid_rectangles(rows, cols, padding, parent=dialog)
+            if ok:
+                dialog.destroy()
 
         generate_button = ttk.Button(button_frame, text="칸 만들기", command=on_generate)
         generate_button.pack(side="left", padx=5)
 
         cancel_button = ttk.Button(button_frame, text="닫기", command=dialog.destroy)
         cancel_button.pack(side="left", padx=5)
+        dialog.bind("<Return>", on_generate)
+        rows_entry.focus_set()
 
         dialog.wait_window()
 
-    def generate_grid_rectangles(self, rows: int, cols: int, padding: int) -> None:
+    def generate_grid_rectangles(self, rows: int, cols: int, padding: int, parent: tk.Misc | None = None) -> bool:
         if not self.loaded_image:
-            return
+            return False
 
-        img_width, img_height = self.loaded_image.width, self.loaded_image.height
-        total_padding_x, total_padding_y = padding * (cols + 1), padding * (rows + 1)
-        if total_padding_x >= img_width or total_padding_y >= img_height:
-            messagebox.showerror("Grid Error", "The total padding is larger than the image dimensions.")
-            return
+        try:
+            rects = core.uniform_grid(self.loaded_image.width, self.loaded_image.height, rows, cols, padding)
+        except ValueError as exc:
+            messagebox.showerror("칸 나누기", str(exc), parent=parent or self.root)
+            return False
 
-        cell_width, cell_height = (img_width - total_padding_x) / cols, (img_height - total_padding_y) / rows
-        if cell_width < 1 or cell_height < 1:
-            messagebox.showerror("Grid Error", "Cell size would fall below 1px. Reduce rows, columns, or padding.")
-            return
-
-        self.rectangles = []
+        self.rectangles = [CropRectangle.from_tuple(r) for r in core.clamp_rects(rects, self.loaded_image.width, self.loaded_image.height)]
         self.selected_rectangle_index = None
         self.drag_context = None
         self.is_configured = False
 
-        self.rectangles = [
-            CropRectangle(
-                round(padding + c * (cell_width + padding)),
-                round(padding + r * (cell_height + padding)),
-                round(padding + c * (cell_width + padding) + cell_width),
-                round(padding + r * (cell_height + padding) + cell_height),
-            )
-            for r in range(rows)
-            for c in range(cols)
-        ]
-
         self._refresh_overlays()
         self._update_controls()
-        self.status_var.set(f"Generated a {rows} x {cols} grid with {len(self.rectangles)} crop regions.")
+        self.status_var.set(f"{rows}×{cols} 칸으로 영역 {len(self.rectangles)}개를 만들었습니다. 확인 후 '확정'을 누르세요.")
+        return True
+
+    def _apply_auto_grid(self, rows: int, cols: int, detect_gutters: bool, confirm: bool) -> bool:
+        assert self.loaded_image is not None
+        image = self.loaded_image.image
+        try:
+            split = core.split_grid_auto(image, rows, cols, detect_gutters)
+        except ValueError as exc:
+            messagebox.showerror("칸 나누기", str(exc))
+            return False
+        rects = core.clamp_rects(split.rects, image.width, image.height)
+        if len(rects) != rows * cols:
+            messagebox.showerror("칸 나누기", "그림이 너무 작아 칸을 나눌 수 없습니다.")
+            return False
+        self.rectangles = [CropRectangle.from_tuple(r) for r in rects]
+        self.selected_rectangle_index = None
+        self.drag_context = None
+        self.is_configured = confirm
+        self._refresh_overlays()
+        self._update_controls()
+        self.last_grid_message = core.describe_grid_split(split) if detect_gutters else f"{rows}×{cols} {len(rects)}칸으로 같은 간격으로 나눴습니다."
+        self.status_var.set(self.last_grid_message)
+        return True
+
+    def quick_split(self, rows: int, cols: int) -> None:
+        """「4칸」「9칸」: 영역을 만들고 확정까지 한 뒤, 저장 폴더가 있으면 바로 저장할지 묻는다."""
+        if not self.loaded_image:
+            return
+        if not self._apply_auto_grid(rows, cols, self.detect_gutters_var.get(), confirm=True):
+            return
+        message = self.last_grid_message
+        if self.output_dir is not None and self.output_dir.is_dir():
+            if messagebox.askyesno("바로 저장", f"{message}\n\n저장 폴더: {self.output_dir}\n지금 잘라서 저장할까요?"):
+                self.split_image()
+        else:
+            messagebox.showinfo("칸 나누기", f"{message}\n\n저장 폴더를 정한 뒤 '잘라서 저장'을 누르세요.")
 
     def apply_settings(self) -> None:
         if not self.loaded_image:
@@ -1497,501 +1791,551 @@ class AutoCropApp:
         self._update_controls()
 
         if self.rectangles:
-            self.status_var.set(f"Layout confirmed with {len(self.rectangles)} crop regions.")
+            self.status_var.set(f"영역 {len(self.rectangles)}개로 확정했습니다.")
         else:
-            self.status_var.set("No crop regions are available to confirm yet.")
+            self.status_var.set("확정할 영역이 아직 없습니다.")
+
+    # ------------------------------------------------------------------
+    # 한 장 저장
+    # ------------------------------------------------------------------
 
     def split_image(self) -> None:
         if not self.loaded_image or not self.is_configured or not self.rectangles:
             return
 
         if self.output_dir is None or not self.output_dir.is_dir():
-            messagebox.showerror("Export Failed", "Choose an output folder before exporting crops.")
+            messagebox.showerror("저장 실패", "먼저 저장 폴더를 정해 주세요.")
             return
 
         output_dir = self.output_dir
         stem = self.loaded_image.save_stem
         suffix = self._resolve_output_suffix()
+        icc = self.loaded_image.image.info.get("icc_profile")
         saved_paths: list[Path] = []
+        error_text: str | None = None
 
-        try:
-            for index, rectangle in enumerate(self.rectangles, start=1):
-                cropped = self.loaded_image.image.crop(
-                    (rectangle.left, rectangle.top, rectangle.right, rectangle.bottom)
-                )
-                target_path = self._build_output_path(output_dir, f"{stem}_rect_{index:02d}", suffix)
-                self._save_cropped_image(cropped, target_path)
-                saved_paths.append(target_path)
-        except Exception as exc:  # pragma: no cover - tkinter dialog flow
-            messagebox.showerror("Export Failed", f"An error occurred while exporting crops.\n{exc}")
-            return
-
-        self._append_history_entry(
-            job_type="single",
-            source_images=[self.loaded_image.display_name],
-            output_dir=output_dir,
-            saved_paths=saved_paths,
-            rectangles_count=len(self.rectangles),
-        )
-        self.status_var.set(f"Exported {len(saved_paths)} crops to {output_dir}")
-        messagebox.showinfo(
-            "Export Complete",
-            f"Saved {len(saved_paths)} cropped files.\n\nOutput:\n{output_dir}",
-        )
-
-    def _perform_batch_job(
-        self,
-        dialog: tk.Toplevel,
-        progress_bar: ttk.Progressbar,
-        file_list: list[Path],
-        crop_rects: list[CropRectangle],
-        output_dir: Path,
-        source_image_size: tuple[int, int] | None,
-        create_subfolders: bool,
-    ) -> None:
-        total_files = len(file_list)
-        progress_bar["maximum"] = total_files
-        saved_count = 0
-        error_count = 0
-        errors: list[str] = []
-        failed_paths: list[Path] = []
-        saved_paths: list[Path] = []
-
-        for i, image_path in enumerate(file_list):
+        for index, rectangle in enumerate(self.rectangles, start=1):
             try:
-                with Image.open(image_path) as source_image:
-                    current_image = source_image.copy()
+                rect = rectangle.normalized()
+                cropped = self.loaded_image.image.crop((rect.left, rect.top, rect.right, rect.bottom))
+                target_path = core.build_output_path(output_dir, f"{stem}_rect_{index:02d}", suffix)
+                core.save_image(cropped, target_path, icc)
+                saved_paths.append(target_path)
+            except Exception as exc:  # pragma: no cover - tkinter dialog flow
+                error_text = f"{index}번 영역 저장 중: {core.describe_error(exc)}"
+                break
 
-                rects_to_apply = crop_rects
-                if source_image_size is not None:
-                    saved_width, saved_height = source_image_size
-                    current_width, current_height = current_image.width, current_image.height
-                    ratio_x = current_width / saved_width if saved_width else 1.0
-                    ratio_y = current_height / saved_height if saved_height else 1.0
+        if saved_paths:
+            self._append_history_entry(
+                job_type="single",
+                source_images=[self.loaded_image.display_name],
+                output_dir=output_dir,
+                saved_paths=saved_paths,
+                rectangles_count=len(self.rectangles),
+            )
 
-                    scaled_rects = [
-                        CropRectangle(
-                            left=round(rect.left * ratio_x),
-                            top=round(rect.top * ratio_y),
-                            right=round(rect.right * ratio_x),
-                            bottom=round(rect.bottom * ratio_y),
-                        )
-                        for rect in crop_rects
-                    ]
-                    rects_to_apply = self._normalize_rectangles_collection(scaled_rects)
-
-                if not rects_to_apply:
-                    raise ValueError("No valid crop regions remain after scaling.")
-
-                stem = image_path.stem
-                suffix = self._get_batch_output_suffix(image_path)
-
-                current_output_dir = output_dir
-                if create_subfolders:
-                    current_output_dir = output_dir / stem
-                    current_output_dir.mkdir(parents=True, exist_ok=True)
-
-                for index, rectangle in enumerate(rects_to_apply, start=1):
-                    normalized_rect = rectangle.normalized()
-                    cropped = current_image.crop(
-                        (normalized_rect.left, normalized_rect.top, normalized_rect.right, normalized_rect.bottom)
-                    )
-                    target_path = self._build_output_path(current_output_dir, f"{stem}_rect_{index:02d}", suffix)
-                    self._save_cropped_image(cropped, target_path)
-                    saved_count += 1
-                    saved_paths.append(target_path)
-            except Exception as exc:
-                error_count += 1
-                failed_paths.append(image_path)
-                errors.append(f"{image_path.name}: {exc}")
-            finally:
-                dialog.after(0, lambda p=i + 1: progress_bar.config(value=p))
-
-        def show_final_message() -> None:
-            self.last_batch_context = {
-                "crop_rects": [rect for rect in crop_rects],
-                "output_dir": output_dir,
-                "source_image_size": source_image_size,
-                "create_subfolders": create_subfolders,
-            }
-            self.last_batch_failures = failed_paths
-            self._update_controls()
-
-            if saved_paths:
-                self._append_history_entry(
-                    job_type="batch",
-                    source_images=[path.name for path in file_list],
-                    output_dir=output_dir,
-                    saved_paths=saved_paths,
-                    rectangles_count=len(crop_rects),
-                )
-            message = f"Batch processing finished.\n\nFiles attempted: {total_files}\nCrops saved: {saved_count}"
-            if error_count > 0:
-                message += f"\nFiles with errors: {error_count}"
-                message += "\nUse 'Retry Failed' in the toolbar to rerun only the failed files."
-                if errors and len(errors) < 5:
-                    message += "\n\nError details:\n" + "\n".join(errors)
-            messagebox.showinfo("Batch Complete", message, parent=dialog)
-            dialog.destroy()
-
-        dialog.after(0, show_final_message)
-
-    def retry_failed_batch_jobs(self) -> None:
-        if not self.last_batch_context or not self.last_batch_failures:
-            messagebox.showinfo("Retry Failed", "There are no failed batch items to retry.")
+        if error_text:
+            messagebox.showerror(
+                "저장 실패",
+                f"{error_text}\n\n그 전까지 {len(saved_paths)}개는 저장했습니다.\n저장 폴더: {output_dir}",
+            )
             return
 
-        valid_failures = [path for path in self.last_batch_failures if path.exists() and path.is_file()]
-        if not valid_failures:
-            messagebox.showwarning("Retry Failed", "The previously failed files can no longer be found.")
-            self.last_batch_failures = []
-            self._update_controls()
-            return
-
-        output_dir_raw = self.last_batch_context.get("output_dir")
-        output_dir = output_dir_raw if isinstance(output_dir_raw, Path) else None
-        if output_dir is None or not output_dir.exists():
-            messagebox.showerror("Retry Failed", "The previous batch output folder could not be found.")
-            return
-
-        crop_rects_raw = self.last_batch_context.get("crop_rects", [])
-        crop_rects = crop_rects_raw if isinstance(crop_rects_raw, list) else []
-        if not crop_rects:
-            messagebox.showerror("Retry Failed", "The previous batch crop layout is missing.")
-            return
-
-        source_image_size_raw = self.last_batch_context.get("source_image_size")
-        source_image_size = source_image_size_raw if isinstance(source_image_size_raw, tuple) else None
-        create_subfolders_raw = self.last_batch_context.get("create_subfolders", True)
-        create_subfolders = bool(create_subfolders_raw)
-
-        retry_dialog = tk.Toplevel(self.root)
-        retry_dialog.title("실패한 사진 다시")
-        retry_dialog.geometry("520x160")
-        retry_dialog.transient(self.root)
-        retry_dialog.grab_set()
-        self._style_dialog(retry_dialog)
-
-        frame = ttk.Frame(retry_dialog, padding=12)
-        frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text=f"Retrying {len(valid_failures)} failed source files.").pack(anchor="w", pady=(0, 8))
-        progress_bar = ttk.Progressbar(frame, orient="horizontal", mode="determinate")
-        progress_bar.pack(fill="x", pady=(0, 8))
-        ttk.Label(frame, text="Running...").pack(anchor="w")
-
-        thread = threading.Thread(
-            target=self._perform_batch_job,
-            args=(
-                retry_dialog,
-                progress_bar,
-                valid_failures,
-                crop_rects,
-                output_dir,
-                source_image_size,
-                create_subfolders,
-            ),
-            daemon=True,
+        self.status_var.set(f"조각 {len(saved_paths)}개를 저장했습니다: {output_dir}")
+        messagebox.showinfo(
+            "저장 끝",
+            f"잘라 낸 조각 {len(saved_paths)}개를 저장했습니다.\n\n저장 폴더:\n{output_dir}",
         )
-        thread.start()
-
-    def _get_batch_output_suffix(self, image_path: Path) -> str:
-        suffix = image_path.suffix.lower()
-        if suffix in SUPPORTED_IMAGE_SUFFIXES:
-            return suffix
-        return ".png"
 
     def _resolve_output_suffix(self) -> str:
         assert self.loaded_image is not None
 
         if self.loaded_image.path is not None:
             suffix = self.loaded_image.path.suffix.lower()
-        else:
-            suffix = self._suffix_from_format_name(self.loaded_image.format_name)
-
-        if suffix in SUPPORTED_IMAGE_SUFFIXES:
-            return suffix
-        return ".png"
+            if suffix in SUPPORTED_IMAGE_SUFFIXES:
+                return suffix
+        return core.suffix_from_format(self.loaded_image.format_name)
 
     def _suffix_from_format_name(self, format_name: str | None) -> str:
-        if not format_name:
-            return ".png"
-
-        normalized = format_name.strip().upper()
-        format_to_suffix = {
-            "PNG": ".png",
-            "JPEG": ".jpg",
-            "JPG": ".jpg",
-            "BMP": ".bmp",
-            "GIF": ".gif",
-            "WEBP": ".webp",
-            "TIFF": ".tiff",
-            "TIF": ".tif",
-        }
-        return format_to_suffix.get(normalized, ".png")
+        return core.suffix_from_format(format_name)
 
     def _build_output_path(self, output_dir: Path, base_name: str, suffix: str) -> Path:
-        target = output_dir / f"{base_name}{suffix}"
-        attempt = 1
-        while target.exists():
-            target = output_dir / f"{base_name}_{attempt}{suffix}"
-            attempt += 1
-        return target
+        return core.build_output_path(output_dir, base_name, suffix)
 
     def _save_cropped_image(self, image: "Image.Image", target_path: Path) -> None:
-        suffix = target_path.suffix.lower()
-        if suffix in {".jpg", ".jpeg"} and image.mode not in {"RGB", "L"}:
-            image = image.convert("RGB")
-        image.save(target_path)
+        core.save_image(image, target_path)
+
+    # ------------------------------------------------------------------
+    # 글자 읽기
+    # ------------------------------------------------------------------
+
+    def _ocr_targets(self) -> list[tuple[str, "Image.Image"]]:
+        """읽을 조각들. 영역이 없으면 사진 전체."""
+        assert self.loaded_image is not None
+        image = self.loaded_image.image
+        targets: list[tuple[str, "Image.Image"]] = []
+        for index, rectangle in enumerate(self.rectangles, start=1):
+            rect = rectangle.normalized()
+            if rect.right - rect.left < MIN_RECT_SIZE or rect.bottom - rect.top < MIN_RECT_SIZE:
+                continue
+            targets.append((f"영역 {index}", image.crop((rect.left, rect.top, rect.right, rect.bottom))))
+        if not targets:
+            targets.append(("사진 전체", image.copy()))
+        return targets
+
+    def run_ocr(self) -> None:
+        if not self.loaded_image:
+            messagebox.showwarning("글자 읽기", "먼저 사진을 열거나 붙여넣어 주세요.")
+            return
+        if self.ocr_running:
+            return
+        if self.ocr_settings.engine == "cpp":
+            self.run_cpp_ocr()
+            return
+
+        targets = self._ocr_targets()
+        settings = replace(self.ocr_settings)
+        source_name = self.loaded_image.display_name
+        save_stem = self.loaded_image.save_stem
+        self._set_ocr_running(True)
+        self.status_var.set(f"글자 읽기를 시작합니다: {len(targets)}개 조각 (내 PC Ollama)")
+
+        def worker() -> None:
+            started = time.perf_counter()
+            results: list[tuple[str, str]] = []
+            model = ""
+            error: str | None = None
+            try:
+                client = core.OllamaClient(settings.ollama_host, timeout=settings.timeout_sec)
+                model = client.pick_vision_model(settings.ollama_model)
+                for index, (label, crop) in enumerate(targets, start=1):
+                    self._post(lambda i=index, m=model: self.status_var.set(f"글자 읽는 중… {i}/{len(targets)} (모델 {m})"))
+                    results.append((label, client.read_text(model, crop)))
+            except core.OcrError as exc:
+                error = str(exc)
+            except Exception as exc:  # pragma: no cover - 예상 밖 오류도 화면에 알린다
+                error = core.describe_error(exc)
+            elapsed = time.perf_counter() - started
+            self._post(lambda: self._finish_ocr("ollama", model, source_name, save_stem, results, error, elapsed))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _set_ocr_running(self, running: bool) -> None:
+        self.ocr_running = running
+        self._update_controls()
+
+    def _finish_ocr(
+        self,
+        engine: str,
+        model: str,
+        source_name: str,
+        save_stem: str,
+        results: list[tuple[str, str]],
+        error: str | None,
+        elapsed: float,
+        confidences: list[object] | None = None,
+    ) -> None:
+        self._set_ocr_running(False)
+        if results:
+            items = []
+            for i, (label, text) in enumerate(results):
+                items.append(
+                    {
+                        "file": label,
+                        "text": text[:2000],
+                        "confidence": confidences[i] if confidences and i < len(confidences) else None,
+                    }
+                )
+            self._append_history_entry(
+                job_type="ocr",
+                source_images=[source_name],
+                output_dir=None,
+                saved_paths=[],
+                rectangles_count=len(results),
+                details={
+                    "ocr": {
+                        "engine": engine,
+                        "model": model,
+                        "elapsed_sec": round(elapsed, 2),
+                        "items_count": len(items),
+                        "items_preview": items,
+                    }
+                },
+            )
+        if error and not results:
+            self.status_var.set("글자 읽기를 하지 못했습니다.")
+            messagebox.showerror("글자 읽기", error)
+            return
+        self.status_var.set(f"글자 읽기 끝: {len(results)}개 조각, {elapsed:.1f}초")
+        self._show_ocr_result_window(engine, model, save_stem, results, error, elapsed)
+
+    def _show_ocr_result_window(
+        self,
+        engine: str,
+        model: str,
+        save_stem: str,
+        results: list[tuple[str, str]],
+        error: str | None,
+        elapsed: float,
+    ) -> None:
+        window = tk.Toplevel(self.root)
+        window.title("읽은 글자")
+        window.geometry("760x560")
+        window.transient(self.root)
+        self._style_dialog(window)
+
+        frame = ttk.Frame(window, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.rowconfigure(1, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        engine_label = f"모델 {model}" if engine == "ollama" else "C++ 실행기"
+        summary = f"{engine_label} · 조각 {len(results)}개 · {elapsed:.1f}초"
+        if error:
+            summary += "\n중간에 멈췄습니다: " + error.splitlines()[0]
+        ttk.Label(frame, text=summary, justify="left").grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        text_frame = ttk.Frame(frame)
+        text_frame.grid(row=1, column=0, sticky="nsew")
+        text_frame.rowconfigure(0, weight=1)
+        text_frame.columnconfigure(0, weight=1)
+        text_widget = tk.Text(text_frame, wrap="word", font=("Malgun Gothic", 11))
+        text_widget.grid(row=0, column=0, sticky="nsew")
+        self._style_text_widget(text_widget)
+        scroll = ttk.Scrollbar(text_frame, orient="vertical", command=text_widget.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        text_widget.configure(yscrollcommand=scroll.set)
+        text_widget.insert("1.0", core.format_ocr_results(results))
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=2, column=0, sticky="e", pady=(10, 0))
+
+        def copy_all() -> None:
+            content = text_widget.get("1.0", "end-1c")
+            window.clipboard_clear()
+            window.clipboard_append(content)
+            self.status_var.set("읽은 글자를 클립보드에 복사했습니다.")
+
+        def save_text() -> None:
+            initial_dir = self.output_dir if self.output_dir and self.output_dir.is_dir() else Path.cwd()
+            target = filedialog.asksaveasfilename(
+                title="읽은 글자 저장",
+                parent=window,
+                initialdir=str(initial_dir),
+                initialfile=f"{save_stem}_글자.txt",
+                defaultextension=".txt",
+                filetypes=TEXT_FILE_TYPES,
+            )
+            if not target:
+                return
+            try:
+                core.write_text_atomic(Path(target), text_widget.get("1.0", "end-1c"))
+            except OSError as exc:
+                messagebox.showerror("저장 실패", core.describe_error(exc), parent=window)
+                return
+            self.status_var.set(f"읽은 글자를 저장했습니다: {target}")
+
+        ttk.Button(buttons, text="전부 복사", command=copy_all).pack(side="left", padx=(0, 8))
+        ttk.Button(buttons, text="텍스트로 저장", command=save_text).pack(side="left", padx=(0, 8))
+        ttk.Button(buttons, text="닫기", command=window.destroy).pack(side="left")
+
+    def open_ocr_settings_dialog(self) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("글자 읽기 설정")
+        dialog.geometry("640x430")
+        dialog.minsize(560, 400)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        self._style_dialog(dialog)
+
+        settings = self.ocr_settings
+        engine_var = tk.StringVar(value=settings.engine)
+        host_var = tk.StringVar(value=settings.ollama_host)
+        model_var = tk.StringVar(value=settings.ollama_model)
+        timeout_var = tk.StringVar(value=str(settings.timeout_sec))
+        info_var = tk.StringVar(value="모델을 비워 두면 그림을 읽을 수 있는 모델을 자동으로 고릅니다.")
+
+        frame = ttk.Frame(dialog, padding=15)
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(1, weight=1)
+
+        ttk.Label(frame, text="읽는 방식").grid(row=0, column=0, sticky="w")
+        engine_frame = ttk.Frame(frame)
+        engine_frame.grid(row=0, column=1, columnspan=2, sticky="w")
+        ttk.Radiobutton(engine_frame, text="내 PC Ollama (기본)", variable=engine_var, value="ollama").pack(side="left")
+        ttk.Radiobutton(engine_frame, text="C++ 실행기 (고급)", variable=engine_var, value="cpp").pack(side="left", padx=(12, 0))
+
+        ttk.Label(frame, text="Ollama 주소").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(frame, textvariable=host_var).grid(row=1, column=1, columnspan=2, sticky="ew", pady=(10, 0))
+
+        ttk.Label(frame, text="모델").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        model_combo = ttk.Combobox(frame, textvariable=model_var, values=[])
+        model_combo.grid(row=2, column=1, sticky="ew", pady=(10, 0))
+        find_button = ttk.Button(frame, text="모델 찾기")
+        find_button.grid(row=2, column=2, sticky="e", padx=(8, 0), pady=(10, 0))
+
+        ttk.Label(frame, text="기다리는 시간(초)").grid(row=3, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(frame, textvariable=timeout_var, width=10).grid(row=3, column=1, sticky="w", pady=(10, 0))
+
+        ttk.Label(frame, textvariable=info_var, wraplength=580, justify="left").grid(
+            row=4, column=0, columnspan=3, sticky="w", pady=(12, 0)
+        )
+
+        cpp_frame = ttk.LabelFrame(frame, text="C++ 실행기 (고급)", padding=10)
+        cpp_frame.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        ttk.Label(
+            cpp_frame,
+            text=f"직접 빌드한 실행기와 모델 파일(detector.engine, recognizer.engine)이 있어야 합니다.\n모델 폴더: {DEFAULT_OCR_MODEL_DIR}",
+            wraplength=560,
+            justify="left",
+        ).pack(anchor="w")
+        ttk.Button(cpp_frame, text="모델 넣기", command=self.import_ocr_model_package).pack(anchor="w", pady=(8, 0))
+
+        def find_models() -> None:
+            host = host_var.get()
+            find_button.config(state="disabled")
+            info_var.set("Ollama에서 모델을 찾는 중…")
+
+            def worker() -> None:
+                try:
+                    client = core.OllamaClient(host, timeout=30)
+                    names = client.list_models()
+                    vision = client.vision_models()
+                except core.OcrError as exc:
+                    message = str(exc)
+                    self._post(lambda: (find_button.config(state="normal"), info_var.set(message)))
+                    return
+
+                def show() -> None:
+                    find_button.config(state="normal")
+                    model_combo.config(values=vision)
+                    if vision:
+                        info_var.set(f"그림을 읽을 수 있는 모델 {len(vision)}개: {', '.join(vision)}")
+                        if not model_var.get().strip():
+                            model_var.set(vision[0])
+                    else:
+                        info_var.set(core.no_vision_model_message(names))
+
+                self._post(show)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        find_button.config(command=find_models)
+
+        def save() -> None:
+            try:
+                host = core.normalize_local_host(host_var.get())
+            except core.OcrError as exc:
+                messagebox.showerror("설정 저장", str(exc), parent=dialog)
+                return
+            try:
+                timeout = int(timeout_var.get().strip())
+                if not 10 <= timeout <= 3600:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("설정 저장", "기다리는 시간은 10~3600초 사이 정수로 넣어 주세요.", parent=dialog)
+                return
+            self.ocr_settings = core.OcrSettings(
+                engine=engine_var.get(),
+                ollama_host=host,
+                ollama_model=model_var.get().strip(),
+                timeout_sec=timeout,
+            )
+            try:
+                core.save_ocr_settings(self.ocr_settings_path, self.ocr_settings)
+            except OSError as exc:
+                messagebox.showwarning("설정 저장", f"이번 실행에는 적용했지만 파일로 저장하지 못했습니다.\n{core.describe_error(exc)}", parent=dialog)
+            self.status_var.set("글자 읽기 설정을 저장했습니다.")
+            dialog.destroy()
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=6, column=0, columnspan=3, sticky="e", pady=(16, 0))
+        ttk.Button(buttons, text="저장", command=save).pack(side="left", padx=(0, 8))
+        ttk.Button(buttons, text="닫기", command=dialog.destroy).pack(side="left")
+
+        dialog.wait_window()
+
+    # C++ 실행기(고급) -----------------------------------------------------
 
     def _resolve_cpp_ocr_executable(self) -> Path:
         candidates = [
-            Path.cwd() / "bin" / "ocr_trt_runner.exe",
-            Path.cwd() / "bin" / "ocr_trt_runner",
-            Path.cwd() / "cpp" / "ocr_engine" / "build" / "ocr_trt_runner.exe",
-            Path.cwd() / "cpp" / "ocr_engine" / "build" / "ocr_trt_runner",
+            APP_DIR / "bin" / "ocr_trt_runner.exe",
+            APP_DIR / "bin" / "ocr_trt_runner",
+            APP_DIR / "cpp" / "ocr_engine" / "build" / "Release" / "ocr_trt_runner.exe",
+            APP_DIR / "cpp" / "ocr_engine" / "build" / "ocr_trt_runner.exe",
+            APP_DIR / "cpp" / "ocr_engine" / "build" / "ocr_trt_runner",
         ]
         for path in candidates:
-            if path.exists() and path.is_file():
+            if path.is_file():
                 return path
         return candidates[0]
 
     def _validate_ocr_model_dir(self, model_dir: Path) -> tuple[bool, list[str]]:
-        missing = [name for name in REQUIRED_OCR_MODEL_FILES if not (model_dir / name).exists()]
+        missing = [name for name in REQUIRED_OCR_MODEL_FILES if not (model_dir / name).is_file()]
         return len(missing) == 0, missing
 
     def import_ocr_model_package(self) -> None:
         package_path = filedialog.askopenfilename(
-            title="OCR 모델 ZIP 파일 선택",
-            filetypes=[("ZIP files", "*.zip"), ("All files", "*.*")],
+            title="글자 읽기 모델 ZIP 고르기",
+            filetypes=[("ZIP 파일", "*.zip"), ("모든 파일", "*.*")],
         )
         if not package_path:
             return
 
         destination = DEFAULT_OCR_MODEL_DIR
-        destination.mkdir(parents=True, exist_ok=True)
-
-        temp_extract_dir = Path(tempfile.mkdtemp(prefix="ocr_model_import_"))
         try:
+            # 임시 폴더에 풀지 않고, 필요한 두 파일만 ZIP에서 바로 꺼내 쓴다.
             with zipfile.ZipFile(package_path, "r") as zf:
-                zf.extractall(temp_extract_dir)
-
-            candidate_dirs = [temp_extract_dir] + [p for p in temp_extract_dir.iterdir() if p.is_dir()]
-            selected_dir: Path | None = None
-            for candidate in candidate_dirs:
-                is_valid, _missing = self._validate_ocr_model_dir(candidate)
-                if is_valid:
-                    selected_dir = candidate
-                    break
-
-            if selected_dir is None:
-                messagebox.showerror(
-                    "모델 가져오기 실패",
-                    "ZIP 내부에서 detector.engine / recognizer.engine 파일을 찾지 못했습니다.",
-                )
-                return
-
-            for file_name in REQUIRED_OCR_MODEL_FILES:
-                shutil.copy2(selected_dir / file_name, destination / file_name)
-
-            self.status_var.set(f"OCR 모델 가져오기 완료: {destination}")
-            messagebox.showinfo("모델 가져오기 완료", f"모델 파일을 적용했습니다.\n{destination}")
+                members = {Path(info.filename).name: info for info in zf.infolist() if not info.is_dir()}
+                missing = [name for name in REQUIRED_OCR_MODEL_FILES if name not in members]
+                if missing:
+                    messagebox.showerror(
+                        "모델 넣기 실패",
+                        f"ZIP 안에서 다음 파일을 찾지 못했습니다: {', '.join(missing)}",
+                    )
+                    return
+                destination.mkdir(parents=True, exist_ok=True)
+                for file_name in REQUIRED_OCR_MODEL_FILES:
+                    with zf.open(members[file_name]) as src, open(destination / file_name, "wb") as dst:
+                        shutil.copyfileobj(src, dst)
         except (OSError, zipfile.BadZipFile) as exc:
-            messagebox.showerror("모델 가져오기 실패", f"모델 ZIP 처리 중 오류가 발생했습니다.\n{exc}")
-        finally:
-            shutil.rmtree(temp_extract_dir, ignore_errors=True)
+            detail = "ZIP 파일이 손상됐습니다." if isinstance(exc, zipfile.BadZipFile) else core.describe_error(exc)
+            messagebox.showerror("모델 넣기 실패", f"모델 ZIP을 처리하지 못했습니다.\n{detail}")
+            return
+
+        self.status_var.set(f"글자 읽기 모델을 넣었습니다: {destination}")
+        messagebox.showinfo("모델 넣기 끝", f"모델 파일을 넣었습니다.\n{destination}")
 
     def run_cpp_ocr(self) -> None:
         if not self.loaded_image:
-            messagebox.showwarning("OCR", "먼저 이미지를 불러오세요.")
-            return
-
-        if not self.rectangles:
-            messagebox.showwarning("OCR", "OCR 대상 영역이 없습니다. 사각형을 먼저 지정하세요.")
+            messagebox.showwarning("글자 읽기", "먼저 사진을 열거나 붙여넣어 주세요.")
             return
 
         executable = self._resolve_cpp_ocr_executable()
-        if not executable.exists():
+        if not executable.is_file():
             messagebox.showerror(
-                "OCR 실행 파일 없음",
+                "실행기 없음",
                 (
-                    "C++ TensorRT OCR 실행 파일을 찾지 못했습니다.\n\n"
-                    f"기대 경로: {executable}\n"
-                    "먼저 cpp/ocr_engine을 빌드해 주세요."
+                    "C++ 글자 읽기 실행기를 찾지 못했습니다.\n\n"
+                    f"찾은 곳: {executable}\n"
+                    "cpp/ocr_engine을 빌드하거나, '읽기 설정'에서 '내 PC Ollama'로 바꿔 주세요."
                 ),
             )
             return
 
-        if not DEFAULT_OCR_MODEL_DIR.exists():
-            messagebox.showerror(
-                "OCR 모델 경로 없음",
-                (
-                    "TensorRT OCR 모델 폴더를 찾지 못했습니다.\n\n"
-                    f"기대 경로: {DEFAULT_OCR_MODEL_DIR}\n"
-                    "모델/엔진 파일을 준비해 주세요."
-                ),
-            )
-            return
         is_valid_model, missing_files = self._validate_ocr_model_dir(DEFAULT_OCR_MODEL_DIR)
         if not is_valid_model:
             messagebox.showerror(
-                "OCR 모델 파일 누락",
+                "모델 파일 없음",
                 (
-                    f"다음 모델 파일이 필요합니다: {', '.join(REQUIRED_OCR_MODEL_FILES)}\n"
-                    f"누락 파일: {', '.join(missing_files)}\n\n"
-                    "툴바의 '모델 가져오기'를 눌러 ZIP을 가져오세요."
+                    f"필요한 모델 파일: {', '.join(REQUIRED_OCR_MODEL_FILES)}\n"
+                    f"빠진 파일: {', '.join(missing_files)}\n\n"
+                    "'읽기 설정'의 '모델 넣기'로 ZIP을 넣어 주세요."
                 ),
             )
             return
 
-        with tempfile.TemporaryDirectory(prefix="autocrop_ocr_") as temp_dir_str:
-            temp_dir = Path(temp_dir_str)
-            input_dir = temp_dir / "inputs"
-            input_dir.mkdir(parents=True, exist_ok=True)
-            output_json = temp_dir / "ocr_result.json"
+        targets = self._ocr_targets()
+        source_name = self.loaded_image.display_name
+        save_stem = self.loaded_image.save_stem
+        work_dir = self.data_dir / ".ocr_work" / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        self._set_ocr_running(True)
+        self.status_var.set("C++ 실행기로 글자를 읽는 중…")
 
-            for index, rectangle in enumerate(self.rectangles, start=1):
-                normalized = rectangle.normalized()
-                cropped = self.loaded_image.image.crop(
-                    (normalized.left, normalized.top, normalized.right, normalized.bottom)
-                )
-                cropped_path = input_dir / f"crop_{index:02d}.png"
-                self._save_cropped_image(cropped, cropped_path)
-
-            command = [
-                str(executable),
-                "--input-dir",
-                str(input_dir),
-                "--output-json",
-                str(output_json),
-                "--model-dir",
-                str(DEFAULT_OCR_MODEL_DIR),
-            ]
-
+        def worker() -> None:
+            started = time.perf_counter()
+            results: list[tuple[str, str]] = []
+            confidences: list[object] = []
+            error: str | None = None
             try:
-                completed = subprocess.run(command, check=False, capture_output=True, text=True)
-            except OSError as exc:
-                messagebox.showerror("OCR 실행 실패", f"OCR 엔진 실행 중 오류가 발생했습니다.\n{exc}")
-                return
-
-            if completed.returncode != 0:
-                stderr = completed.stderr.strip() or "(stderr 없음)"
-                messagebox.showerror(
-                    "OCR 실패",
-                    f"OCR 엔진이 실패했습니다 (exit code: {completed.returncode}).\n\n{stderr}",
+                input_dir = work_dir / "inputs"
+                input_dir.mkdir(parents=True, exist_ok=True)
+                output_json = work_dir / "ocr_result.json"
+                names: dict[str, str] = {}
+                for index, (label, crop) in enumerate(targets, start=1):
+                    file_name = f"crop_{index:02d}.png"
+                    core.save_image(crop, input_dir / file_name)
+                    names[file_name] = label
+                command = [
+                    str(executable),
+                    "--input-dir", str(input_dir),
+                    "--output-json", str(output_json),
+                    "--model-dir", str(DEFAULT_OCR_MODEL_DIR),
+                ]
+                completed = subprocess.run(
+                    command,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=CPP_OCR_TIMEOUT_SEC,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
-                return
+                if completed.returncode != 0:
+                    raise core.OcrError(
+                        f"C++ 실행기가 실패했습니다(종료 코드 {completed.returncode}).\n{(completed.stderr or '').strip()[:800]}"
+                    )
+                if not output_json.is_file():
+                    raise core.OcrError("C++ 실행기가 결과 파일(ocr_result.json)을 만들지 않았습니다.")
+                data = json.loads(output_json.read_text(encoding="utf-8"))
+                items = data.get("results", []) if isinstance(data, dict) else []
+                for item in items if isinstance(items, list) else []:
+                    if not isinstance(item, dict):
+                        continue
+                    file_name = Path(str(item.get("file", "-"))).name
+                    results.append((names.get(file_name, file_name), str(item.get("text", "")).strip()))
+                    confidences.append(item.get("confidence"))
+            except subprocess.TimeoutExpired:
+                error = f"C++ 실행기가 {CPP_OCR_TIMEOUT_SEC}초 안에 끝나지 않았습니다."
+            except (core.OcrError, ValueError) as exc:
+                error = str(exc)
+            except Exception as exc:
+                error = core.describe_error(exc)
+            finally:
+                shutil.rmtree(work_dir, ignore_errors=True)
+            elapsed = time.perf_counter() - started
+            self._post(lambda: self._finish_ocr("cpp", "", source_name, save_stem, results, error, elapsed, confidences))
 
-            if not output_json.exists():
-                messagebox.showerror("OCR 실패", "OCR 결과 파일(ocr_result.json)이 생성되지 않았습니다.")
-                return
+        threading.Thread(target=worker, daemon=True).start()
 
-            try:
-                with output_json.open("r", encoding="utf-8") as fp:
-                    data = json.load(fp)
-            except (OSError, json.JSONDecodeError) as exc:
-                messagebox.showerror("OCR 실패", f"OCR 결과를 읽을 수 없습니다.\n{exc}")
-                return
-
-            lines: list[str] = []
-            structured_ocr_items: list[dict[str, object]] = []
-            if isinstance(data, dict):
-                items = data.get("results", [])
-                if isinstance(items, list):
-                    for item in items[:20]:
-                        if not isinstance(item, dict):
-                            continue
-                        file_name = str(item.get("file", "-"))
-                        text = str(item.get("text", "")).strip()
-                        confidence = item.get("confidence")
-                        conf = confidence if confidence is not None else "-"
-                        lines.append(f"{file_name} | conf={conf} | {text}")
-                        structured_ocr_items.append(
-                            {
-                                "file": file_name,
-                                "text": text,
-                                "confidence": confidence,
-                            }
-                        )
-
-            preview = "\n".join(lines) if lines else "결과를 읽었지만 표시할 OCR 항목이 없습니다."
-            self._append_history_entry(
-                job_type="ocr",
-                source_images=[self.loaded_image.display_name],
-                output_dir=DEFAULT_OCR_MODEL_DIR,
-                saved_paths=[],
-                rectangles_count=len(self.rectangles),
-                details={
-                    "ocr": {
-                        "result_file": str(output_json),
-                        "items_count": len(structured_ocr_items),
-                        "items_preview": structured_ocr_items,
-                    }
-                },
-            )
-            self.status_var.set(f"OCR 완료: {len(lines)}개 항목 미리보기 갱신")
-            messagebox.showinfo("OCR 완료", preview)
+    # ------------------------------------------------------------------
+    # 작업 기록
+    # ------------------------------------------------------------------
 
     def _history_file_path(self) -> Path:
-        return Path.cwd() / HISTORY_FILENAME
+        return self.history_path
 
     def _append_history_entry(
         self,
         job_type: str,
         source_images: list[str],
-        output_dir: Path,
+        output_dir: Path | None,
         saved_paths: list[Path],
         rectangles_count: int,
         details: dict[str, object] | None = None,
     ) -> None:
-        history_path = self._history_file_path()
-        entry = {
-            "timestamp": datetime.now().isoformat(timespec="seconds"),
-            "job_type": job_type,
-            "source_images": source_images,
-            "output_dir": str(output_dir),
-            "saved_paths": [str(path) for path in saved_paths],
-            "saved_count": len(saved_paths),
-            "rectangles_count": rectangles_count,
-        }
-        if details is not None:
-            entry["details"] = details
+        entry = core.make_history_entry(job_type, source_images, output_dir, saved_paths, rectangles_count, details)
         try:
-            with history_path.open("a", encoding="utf-8") as fp:
-                fp.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            core.append_history(self._history_file_path(), entry)
         except OSError:
-            self.status_var.set("분할 저장은 완료됐지만 이력 기록 파일을 저장하지 못했습니다.")
+            self.status_var.set("작업은 끝났지만 작업 기록 파일에 적지 못했습니다.")
 
-    def _read_history_entries(self, limit: int = 300) -> list[dict[str, object]]:
-        history_path = self._history_file_path()
-        if not history_path.exists():
-            return []
-
-        entries: list[dict[str, object]] = []
-        try:
-            with history_path.open("r", encoding="utf-8") as fp:
-                for line in fp:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        parsed = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if isinstance(parsed, dict):
-                        entries.append(parsed)
-        except OSError:
-            return []
-        return entries[-limit:][::-1]
+    def _read_history_entries(self, limit: int = HISTORY_PAGE_SIZE, skip: int = 0) -> tuple[list[dict[str, object]], bool]:
+        return core.read_recent_history(self._history_file_path(), limit=limit, skip=skip)
 
     def open_history_viewer(self) -> None:
-        entries = self._read_history_entries()
-        if not entries:
-            messagebox.showinfo("History", "No saved job history is available yet.")
+        first_page, has_more_initial = self._read_history_entries()
+        if not first_page:
+            messagebox.showinfo("기록", "아직 남은 작업 기록이 없습니다.")
             return
 
+        entries: list[dict[str, object]] = list(first_page)
+        state = {"has_more": has_more_initial}
+
         dialog = tk.Toplevel(self.root)
-        dialog.title("Crop History")
-        dialog.geometry("920x560")
+        dialog.title("작업 기록")
+        dialog.geometry("980x600")
         dialog.transient(self.root)
         self._style_dialog(dialog)
 
@@ -2006,25 +2350,25 @@ class AutoCropApp:
 
         ttk.Label(filter_frame, text="시작일(YYYY-MM-DD)").grid(row=0, column=0, sticky="w")
         start_date_var = tk.StringVar()
-        ttk.Entry(filter_frame, textvariable=start_date_var, width=14).grid(row=0, column=1, padx=(4, 12))
+        ttk.Entry(filter_frame, textvariable=start_date_var, width=12).grid(row=0, column=1, padx=(4, 10))
 
-        ttk.Label(filter_frame, text="종료일(YYYY-MM-DD)").grid(row=0, column=2, sticky="w")
+        ttk.Label(filter_frame, text="종료일").grid(row=0, column=2, sticky="w")
         end_date_var = tk.StringVar()
-        ttk.Entry(filter_frame, textvariable=end_date_var, width=14).grid(row=0, column=3, padx=(4, 12))
+        ttk.Entry(filter_frame, textvariable=end_date_var, width=12).grid(row=0, column=3, padx=(4, 10))
 
-        ttk.Label(filter_frame, text="작업유형").grid(row=0, column=4, sticky="w")
+        ttk.Label(filter_frame, text="작업 종류").grid(row=0, column=4, sticky="w")
         job_type_var = tk.StringVar(value="전체")
         ttk.Combobox(
             filter_frame,
             textvariable=job_type_var,
-            values=["전체", "single", "batch", "ocr"],
-            width=10,
+            values=list(JOB_FILTER_LABELS),
+            width=9,
             state="readonly",
-        ).grid(row=0, column=5, padx=(4, 12))
+        ).grid(row=0, column=5, padx=(4, 10))
 
-        ttk.Label(filter_frame, text="OCR 텍스트 검색").grid(row=0, column=6, sticky="w")
+        ttk.Label(filter_frame, text="읽은 글자 검색").grid(row=0, column=6, sticky="w")
         ocr_query_var = tk.StringVar()
-        ttk.Entry(filter_frame, textvariable=ocr_query_var, width=24).grid(row=0, column=7, sticky="ew", padx=(4, 8))
+        ttk.Entry(filter_frame, textvariable=ocr_query_var, width=20).grid(row=0, column=7, sticky="ew", padx=(4, 8))
 
         ttk.Label(filter_frame, text="정렬").grid(row=0, column=8, sticky="w")
         sort_var = tk.StringVar(value="최신순")
@@ -2037,7 +2381,7 @@ class AutoCropApp:
         ).grid(row=0, column=9, padx=(4, 8))
 
         preset_frame = ttk.Frame(container)
-        preset_frame.grid(row=1, column=0, sticky="w", pady=(0, 8))
+        preset_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         ttk.Label(preset_frame, text="빠른 기간").pack(side="left", padx=(0, 6))
 
         notebook = ttk.Notebook(container)
@@ -2046,7 +2390,7 @@ class AutoCropApp:
         history_tab = ttk.Frame(notebook, padding=8)
         history_tab.columnconfigure(0, weight=1)
         history_tab.rowconfigure(0, weight=1)
-        notebook.add(history_tab, text="이력 목록")
+        notebook.add(history_tab, text="기록 목록")
 
         list_frame = ttk.Frame(history_tab)
         list_frame.grid(row=0, column=0, sticky="nsew")
@@ -2062,11 +2406,11 @@ class AutoCropApp:
         ocr_tab = ttk.Frame(notebook, padding=8)
         ocr_tab.columnconfigure(0, weight=1)
         ocr_tab.rowconfigure(1, weight=1)
-        notebook.add(ocr_tab, text="OCR 결과")
+        notebook.add(ocr_tab, text="읽은 글자")
         ocr_control_frame = ttk.Frame(ocr_tab)
         ocr_control_frame.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         ocr_control_frame.columnconfigure(2, weight=1)
-        ttk.Label(ocr_control_frame, text="Confidence 임계값").grid(row=0, column=0, sticky="w")
+        ttk.Label(ocr_control_frame, text="확신도 기준(C++ 실행기 결과만)").grid(row=0, column=0, sticky="w")
         confidence_threshold_var = tk.DoubleVar(value=0.0)
         confidence_scale = ttk.Scale(
             ocr_control_frame,
@@ -2087,12 +2431,27 @@ class AutoCropApp:
         json_tab = ttk.Frame(notebook, padding=8)
         json_tab.columnconfigure(0, weight=1)
         json_tab.rowconfigure(0, weight=1)
-        notebook.add(json_tab, text="상세 JSON")
+        notebook.add(json_tab, text="자세히")
         detail_text = tk.Text(json_tab, wrap="word", state="disabled")
         detail_text.grid(row=0, column=0, sticky="nsew")
         self._style_text_widget(detail_text)
 
+        footer = ttk.Frame(container)
+        footer.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        footer.columnconfigure(0, weight=1)
+        loaded_var = tk.StringVar()
+        ttk.Label(footer, textvariable=loaded_var).grid(row=0, column=0, sticky="w")
+        more_button = ttk.Button(footer, text="더 보기")
+        more_button.grid(row=0, column=1, sticky="e")
+
         filtered_entries: list[dict[str, object]] = []
+
+        def update_loaded_label() -> None:
+            text = f"최근 기록 {len(entries)}건을 불러왔습니다(검색·필터는 불러온 범위 안에서)."
+            if state["has_more"]:
+                text += " 더 오래된 기록이 있습니다."
+            loaded_var.set(text)
+            more_button.config(state="normal" if state["has_more"] else "disabled")
 
         def _parse_date(date_text: str, is_end: bool) -> datetime | None:
             value = date_text.strip()
@@ -2112,39 +2471,35 @@ class AutoCropApp:
             widget.insert("end", value)
             widget.configure(state="disabled")
 
+        def _ocr_items(entry: dict[str, object]) -> list[dict[str, object]]:
+            details = entry.get("details")
+            if not isinstance(details, dict):
+                return []
+            ocr_info = details.get("ocr")
+            if not isinstance(ocr_info, dict):
+                return []
+            items = ocr_info.get("items_preview")
+            return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+
         def _format_entry_label(entry: dict[str, object]) -> str:
-            ts = str(entry.get("timestamp", "-"))
+            ts = str(entry.get("timestamp", "-")).replace("T", " ")
             job = str(entry.get("job_type", "single"))
+            job_label = core.JOB_TYPE_LABELS.get(job, job)
+            sources = entry.get("source_images")
+            first_source = str(sources[0]) if isinstance(sources, list) and sources else ""
             if job == "ocr":
-                details = entry.get("details", {})
-                details_dict = details if isinstance(details, dict) else {}
-                ocr_info = details_dict.get("ocr", {})
-                ocr_dict = ocr_info if isinstance(ocr_info, dict) else {}
-                items_count = int(ocr_dict.get("items_count", 0) or 0)
-                return f"[{ts}] ocr / {items_count}개 텍스트"
-            count = int(entry.get("saved_count", 0) or 0)
-            return f"[{ts}] {job} / {count}개 저장"
+                return f"[{ts}] {job_label} · 조각 {len(_ocr_items(entry))}개 · {first_source}"
+            count = core.safe_int(entry.get("saved_count"))
+            source_count = core.safe_int(entry.get("source_count"), len(sources) if isinstance(sources, list) else 0)
+            if job == "batch":
+                return f"[{ts}] {job_label} · 사진 {source_count}장 · 조각 {count}개 저장"
+            return f"[{ts}] {job_label} · 조각 {count}개 저장 · {first_source}"
 
         def _match_ocr_text(entry: dict[str, object], query: str) -> bool:
             if not query:
                 return True
-            details = entry.get("details")
-            if not isinstance(details, dict):
-                return False
-            ocr_info = details.get("ocr")
-            if not isinstance(ocr_info, dict):
-                return False
-            items = ocr_info.get("items_preview")
-            if not isinstance(items, list):
-                return False
             lowered = query.lower()
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                text = str(item.get("text", ""))
-                if lowered in text.lower():
-                    return True
-            return False
+            return any(lowered in str(item.get("text", "")).lower() for item in _ocr_items(entry))
 
         def _apply_quick_preset(days: int) -> None:
             today = datetime.now().date()
@@ -2160,40 +2515,30 @@ class AutoCropApp:
             entry = filtered_entries[selected[0]]
             _render_text(detail_text, json.dumps(entry, ensure_ascii=False, indent=2))
 
-            details = entry.get("details")
-            ocr_preview_lines: list[str] = []
-            if isinstance(details, dict):
-                ocr_info = details.get("ocr")
-                if isinstance(ocr_info, dict):
-                    items = ocr_info.get("items_preview", [])
-                    if isinstance(items, list):
-                        for idx, item in enumerate(items, start=1):
-                            if not isinstance(item, dict):
-                                continue
-                            text = str(item.get("text", "")).strip()
-                            file_name = str(item.get("file", "-"))
-                            conf = item.get("confidence")
-                            threshold = float(confidence_threshold_var.get())
-                            conf_value: float | None = None
-                            if isinstance(conf, (int, float)):
-                                conf_value = float(conf)
-                            elif isinstance(conf, str):
-                                try:
-                                    conf_value = float(conf)
-                                except ValueError:
-                                    conf_value = None
-                            if conf_value is not None and conf_value < threshold:
-                                continue
-                            low_tag = "⚠️" if conf_value is not None and conf_value < 0.5 else "✅"
-                            ocr_preview_lines.append(
-                                f"{idx:02d}. {low_tag} file={file_name} | confidence={conf if conf is not None else '-'} | {text}"
-                            )
-            ocr_text_value = (
-                "\n".join(ocr_preview_lines)
-                if ocr_preview_lines
-                else "선택된 항목에 OCR 상세 결과가 없거나 임계값 조건에 맞는 결과가 없습니다."
+            threshold = float(confidence_threshold_var.get())
+            lines: list[str] = []
+            for idx, item in enumerate(_ocr_items(entry), start=1):
+                text = str(item.get("text", "")).strip()
+                label = str(item.get("file", "-"))
+                conf = item.get("confidence")
+                conf_value: float | None = None
+                if isinstance(conf, (int, float)) and not isinstance(conf, bool):
+                    conf_value = float(conf)
+                elif isinstance(conf, str):
+                    try:
+                        conf_value = float(conf)
+                    except ValueError:
+                        conf_value = None
+                if conf_value is not None and conf_value < threshold:
+                    continue
+                mark = ""
+                if conf_value is not None:
+                    mark = f" (확신도 {conf_value:.2f}{', 낮음' if conf_value < 0.5 else ''})"
+                lines.append(f"{idx:02d}. {label}{mark}\n{text}\n")
+            _render_text(
+                ocr_text,
+                "\n".join(lines) if lines else "고른 기록에 읽은 글자가 없거나 확신도 기준에 맞는 결과가 없습니다.",
             )
-            _render_text(ocr_text, ocr_text_value)
 
         def refresh_history_list(*_args: object) -> None:
             filtered_entries.clear()
@@ -2201,13 +2546,12 @@ class AutoCropApp:
 
             start_date = _parse_date(start_date_var.get(), is_end=False)
             end_date = _parse_date(end_date_var.get(), is_end=True)
-            selected_job = job_type_var.get().strip()
+            selected_job = JOB_FILTER_LABELS.get(job_type_var.get().strip())
             query = ocr_query_var.get().strip()
 
             for entry in entries:
-                ts_raw = str(entry.get("timestamp", ""))
                 try:
-                    entry_ts = datetime.fromisoformat(ts_raw)
+                    entry_ts: datetime | None = datetime.fromisoformat(str(entry.get("timestamp", "")))
                 except ValueError:
                     entry_ts = None
 
@@ -2215,21 +2559,17 @@ class AutoCropApp:
                     continue
                 if end_date and entry_ts and entry_ts > end_date:
                     continue
-
-                job = str(entry.get("job_type", "single"))
-                if selected_job != "전체" and job != selected_job:
+                if selected_job is not None and str(entry.get("job_type", "single")) != selected_job:
                     continue
-
                 if query and not _match_ocr_text(entry, query):
                     continue
-
                 filtered_entries.append(entry)
 
             selected_sort = sort_var.get().strip()
             if selected_sort == "오래된순":
                 filtered_entries.sort(key=lambda item: str(item.get("timestamp", "")))
             elif selected_sort == "저장개수순":
-                filtered_entries.sort(key=lambda item: int(item.get("saved_count", 0) or 0), reverse=True)
+                filtered_entries.sort(key=lambda item: core.safe_int(item.get("saved_count")), reverse=True)
             else:
                 filtered_entries.sort(key=lambda item: str(item.get("timestamp", "")), reverse=True)
 
@@ -2240,18 +2580,27 @@ class AutoCropApp:
                 listbox.selection_set(0)
                 render_selected()
             else:
-                _render_text(detail_text, "필터 조건에 맞는 이력이 없습니다.")
-                _render_text(ocr_text, "선택된 OCR 이력이 없습니다.")
+                _render_text(detail_text, "조건에 맞는 기록이 없습니다.")
+                _render_text(ocr_text, "고른 기록이 없습니다.")
+            update_loaded_label()
+
+        def load_more() -> None:
+            page, has_more = self._read_history_entries(skip=len(entries))
+            entries.extend(page)
+            state["has_more"] = has_more and bool(page)
+            refresh_history_list()
+
+        more_button.config(command=load_more)
 
         ttk.Button(preset_frame, text="오늘", command=lambda: _apply_quick_preset(1)).pack(side="left", padx=(0, 4))
         ttk.Button(preset_frame, text="7일", command=lambda: _apply_quick_preset(7)).pack(side="left", padx=(0, 4))
         ttk.Button(preset_frame, text="30일", command=lambda: _apply_quick_preset(30)).pack(side="left", padx=(0, 4))
 
-        apply_filter_btn = ttk.Button(filter_frame, text="필터 적용", command=refresh_history_list)
+        apply_filter_btn = ttk.Button(filter_frame, text="찾기", command=refresh_history_list)
         apply_filter_btn.grid(row=0, column=10, padx=(0, 6))
         reset_filter_btn = ttk.Button(
             filter_frame,
-            text="초기화",
+            text="처음으로",
             command=lambda: (
                 start_date_var.set(""),
                 end_date_var.set(""),
@@ -2266,6 +2615,10 @@ class AutoCropApp:
         listbox.bind("<<ListboxSelect>>", render_selected)
         confidence_scale.configure(command=lambda _value: (confidence_value_label.configure(text=f"{confidence_threshold_var.get():.2f}"), render_selected()))
         refresh_history_list()
+
+    # ------------------------------------------------------------------
+    # 좌표 계산
+    # ------------------------------------------------------------------
 
     def _event_to_image_point(self, event: tk.Event) -> tuple[int, int] | None:
         return self._canvas_point_to_image_point(event.x, event.y, clamp=True)
@@ -2299,7 +2652,7 @@ class AutoCropApp:
         return None
 
     def _find_handle_at(self, x: int, y: int) -> str | None:
-        if self.selected_rectangle_index is None:
+        if self.selected_rectangle_index is None or self.selected_rectangle_index >= len(self.rectangles):
             return None
 
         rect = self.rectangles[self.selected_rectangle_index]
@@ -2336,26 +2689,24 @@ class AutoCropApp:
             if orig_width != 0 and orig_height != 0:
                 aspect_ratio = orig_width / orig_height
 
-                # Use float for calculations
                 fl, ft, fr, fb = float(l), float(t), float(r), float(b)
                 fmx = float(mx)
 
-                if handle == "bottom-right":  # Anchor: top-left
+                if handle == "bottom-right":  # 고정점: 왼쪽 위
                     fr = fmx
                     fb = ft + (fr - fl) / aspect_ratio
-                elif handle == "top-left":  # Anchor: bottom-right
+                elif handle == "top-left":  # 고정점: 오른쪽 아래
                     fl = fmx
                     ft = fb - (fr - fl) / aspect_ratio
-                elif handle == "top-right":  # Anchor: bottom-left
+                elif handle == "top-right":  # 고정점: 왼쪽 아래
                     fr = fmx
                     ft = fb - (fr - fl) / aspect_ratio
-                elif handle == "bottom-left":  # Anchor: top-right
+                elif handle == "bottom-left":  # 고정점: 오른쪽 위
                     fl = fmx
                     fb = ft + (fr - fl) / aspect_ratio
 
                 return CropRectangle(round(fl), round(ft), round(fr), round(fb))
 
-        # Default behavior
         if "top" in handle:
             t = my
         if "bottom" in handle:
@@ -2369,33 +2720,17 @@ class AutoCropApp:
 
     def _normalize_rectangle(self, rectangle: CropRectangle) -> CropRectangle | None:
         assert self.loaded_image is not None
-
-        normalized = rectangle.normalized()
-        left = min(max(normalized.left, 0), self.loaded_image.width)
-        top = min(max(normalized.top, 0), self.loaded_image.height)
-        right = min(max(normalized.right, 0), self.loaded_image.width)
-        bottom = min(max(normalized.bottom, 0), self.loaded_image.height)
-
-        if right - left < MIN_RECT_SIZE or bottom - top < MIN_RECT_SIZE:
-            return None
-
-        return CropRectangle(left, top, right, bottom)
+        rects = core.clamp_rects([rectangle.as_tuple()], self.loaded_image.width, self.loaded_image.height)
+        return CropRectangle.from_tuple(rects[0]) if rects else None
 
     def _normalize_rectangles_collection(self, rectangles: list[CropRectangle]) -> list[CropRectangle]:
-        normalized_rectangles: list[CropRectangle] = []
-        seen: set[tuple[int, int, int, int]] = set()
+        assert self.loaded_image is not None
+        rects = core.clamp_rects([r.as_tuple() for r in rectangles], self.loaded_image.width, self.loaded_image.height)
+        return [CropRectangle.from_tuple(r) for r in rects]
 
-        for rectangle in rectangles:
-            normalized = self._normalize_rectangle(rectangle)
-            if normalized is None:
-                continue
-            key = (normalized.left, normalized.top, normalized.right, normalized.bottom)
-            if key in seen:
-                continue
-            seen.add(key)
-            normalized_rectangles.append(normalized)
-
-        return normalized_rectangles
+    # ------------------------------------------------------------------
+    # 겹쳐 그리기
+    # ------------------------------------------------------------------
 
     def _refresh_overlays(self) -> None:
         self.canvas.delete("overlay")
@@ -2513,8 +2848,20 @@ def main() -> int:
         root.destroy()
         return 1
 
+    import argparse
+
+    parser = argparse.ArgumentParser(description=APP_TITLE)
+    parser.add_argument("image", nargs="?", help="시작하면서 열 사진(실행 파일 위에 사진을 끌어 놓아도 된다)")
+    parser.add_argument("--quick-grid", choices=list(QUICK_GRIDS), help="사진을 연 뒤 4칸·9칸으로 나눠 둔다(저장은 하지 않음)")
+    args, _unknown = parser.parse_known_args()
+
     root = tk.Tk()
-    AutoCropApp(root)
+    app = AutoCropApp(root)
+    if args.image:
+        image_path = Path(args.image)
+        if app._load_image_from_path(image_path) and args.quick_grid:
+            rows, cols = QUICK_GRIDS[args.quick_grid]
+            app._apply_auto_grid(rows, cols, app.detect_gutters_var.get(), confirm=True)
     root.mainloop()
     return 0
 
