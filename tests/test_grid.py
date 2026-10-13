@@ -130,6 +130,132 @@ class SplitGridAutoTest(unittest.TestCase):
         self.assertIn("4곳 중 1곳", core.describe_grid_split(part))
 
 
+class EdgeDetectionTest(unittest.TestCase):
+    """경계선 세기로 찾는 경우: 붙은 칸, 무늬 여백, 한쪽만 확인된 여백 고치기."""
+
+    def test_touching_uneven_cells(self) -> None:
+        # 여백 없이 붙은 크기가 다른 네 칸(칸마다 다른 그라데이션 + 잔잡음)
+        colors = [((200, 60, 40), (90, 30, 20)), ((40, 120, 200), (20, 60, 90)),
+                  ((60, 180, 80), (220, 230, 120)), ((240, 200, 210), (120, 80, 160))]
+        widths, heights = [300, 420], [380, 260]
+        image = Image.new("RGB", (sum(widths), sum(heights)))
+        expected = []
+        index = 0
+        for r, h in enumerate(heights):
+            for c, w in enumerate(widths):
+                top, bottom = colors[index]
+                strip = Image.new("RGB", (1, 2))
+                strip.putpixel((0, 0), top)
+                strip.putpixel((0, 1), bottom)
+                cell = strip.resize((w, h), Image.Resampling.BILINEAR)
+                noise = Image.effect_noise((w, h), 8).convert("RGB")
+                cell = Image.blend(cell, noise, 0.1)
+                x, y = sum(widths[:c]), sum(heights[:r])
+                image.paste(cell, (x, y))
+                expected.append((x, y, x + w, y + h))
+                index += 1
+        split = core.split_grid_auto(image, 2, 2)
+        self.assertEqual(split.gutters_found, 2)
+        self.assertEqual(split.rects, expected)
+
+    def test_edge_band_pairs_two_edges_with_flat_inside(self) -> None:
+        edges = [1.0] * 200
+        edges[90], edges[104] = 60.0, 20.0
+        self.assertEqual(core._edge_band(edges, 50, 150, 4.0, 40), (90, 104, core.GAP_BOTH))
+        edges[94:100] = [40.0] * 6  # 사이가 고르지 않으면 여백이 아니다
+        self.assertEqual(core._edge_band(edges, 50, 150, 4.0, 40)[2], core.GAP_TOUCH)
+
+    def test_edge_profile_peaks_at_boundary_not_inside_gradient(self) -> None:
+        # 왼쪽 절반은 위아래 그라데이션, 오른쪽 절반은 잡음: 가운데가 가장 센 경계, 그라데이션 안은 0에 가깝다
+        left = Image.linear_gradient("L").resize((100, 256))
+        right = Image.effect_noise((100, 256), 20)
+        image = Image.new("L", (200, 256))
+        image.paste(left, (0, 0))
+        image.paste(right, (100, 0))
+        edges = core.line_edge_profile(image, "x")
+        self.assertEqual(max(range(200), key=edges.__getitem__), 100)
+        self.assertLess(max(edges[1:99]), core.EDGE_MIN_STRENGTH)
+
+    def test_reconcile_fixes_one_sided_gap(self) -> None:
+        edges = [0.0] * 300
+        x = core.AxisResult(300, 0, 300, [(140, 152, core.GAP_BOTH)], edges)
+        y = core.AxisResult(300, 0, 300, [(150, 190, core.GAP_START)], list(edges))
+        core.reconcile_axes([x, y])
+        self.assertEqual(y.gaps[0], (150, 162, core.GAP_BOTH))
+
+    def test_reconcile_touch_reference_shrinks_run(self) -> None:
+        edges = [0.0] * 300
+        x = core.AxisResult(300, 0, 300, [(140, 140, core.GAP_TOUCH)], edges)
+        y = core.AxisResult(300, 0, 300, [(150, 170, core.GAP_START)], list(edges))
+        core.reconcile_axes([x, y])
+        self.assertEqual(y.gaps[0], (150, 150, core.GAP_BOTH))
+
+
+class SampleSetTest(unittest.TestCase):
+    """scripts/make_grid_samples.py의 시험 그림 전부를 나눠 정답과 비교한다(회귀 방지)."""
+
+    def test_samples_within_3px(self) -> None:
+        import sys
+
+        from helpers import ROOT
+
+        sys.path.insert(0, str(ROOT / "scripts"))
+        try:
+            import make_grid_samples as samples
+        finally:
+            sys.path.remove(str(ROOT / "scripts"))
+        failures = []
+        items = samples.sample_list()
+        for sample in items:
+            image, truth = samples.finish(sample, *samples.render(sample))
+            if sample.jpeg:
+                buffer = io.BytesIO()
+                image.save(buffer, format="JPEG", quality=sample.jpeg)
+                image = Image.open(io.BytesIO(buffer.getvalue()))
+            split = core.split_grid_auto(image, len(sample.rows), len(sample.cols))
+            rects = core.clamp_rects(split.rects, image.width, image.height)
+            error = max(abs(a - b) for g, e in zip(rects, truth) for a, b in zip(g, e))
+            if len(rects) != len(truth) or error > 3:
+                failures.append((sample.name, error))
+        self.assertGreaterEqual(len(items), 20)
+        self.assertLessEqual(len(failures), 2, failures)
+
+
+class SharedEdgeTest(unittest.TestCase):
+    RECTS = [(0, 0, 100, 80), (110, 0, 200, 80), (0, 90, 100, 160), (110, 90, 200, 160)]
+
+    def test_find_in_gutter_and_on_line(self) -> None:
+        self.assertEqual(core.find_shared_edge(self.RECTS, 105, 40, 4), core.SharedEdge("x", 0, 1))
+        self.assertEqual(core.find_shared_edge(self.RECTS, 98, 40, 4), core.SharedEdge("x", 0, 1))
+        self.assertEqual(core.find_shared_edge(self.RECTS, 150, 85, 4), core.SharedEdge("y", 1, 3))
+
+    def test_not_found_inside_cell(self) -> None:
+        self.assertIsNone(core.find_shared_edge(self.RECTS, 50, 40, 4))
+        self.assertIsNone(core.find_shared_edge([(0, 0, 50, 50)], 50, 25, 4))
+
+    def test_not_neighbors_when_barely_overlapping(self) -> None:
+        rects = [(0, 0, 100, 100), (100, 90, 200, 190)]  # 마주 보는 길이 10 — 이웃이 아니다
+        self.assertIsNone(core.find_shared_edge(rects, 100, 95, 4))
+
+    def test_move_keeps_gutter_and_both_cells_change(self) -> None:
+        moved = core.move_shared_edge(self.RECTS, core.SharedEdge("x", 0, 1), 15, 200, 160)
+        self.assertEqual(moved[0], (0, 0, 115, 80))
+        self.assertEqual(moved[1], (125, 0, 200, 80))
+        self.assertEqual(moved[2:], self.RECTS[2:])
+
+    def test_move_is_clamped_to_min_size(self) -> None:
+        moved = core.move_shared_edge(self.RECTS, core.SharedEdge("y", 0, 2), 500, 200, 160)
+        self.assertEqual(moved[2], (0, 156, 100, 160))
+        self.assertEqual(moved[0], (0, 0, 100, 146))
+        moved = core.move_shared_edge(self.RECTS, core.SharedEdge("y", 0, 2), -500, 200, 160)
+        self.assertEqual(moved[0], (0, 0, 100, 4))
+
+
+class VersionTest(unittest.TestCase):
+    def test_version_format(self) -> None:
+        self.assertRegex(core.__version__, r"^\d+\.\d+\.\d+$")
+
+
 class RectHelpersTest(unittest.TestCase):
     def test_clamp_and_dedupe(self) -> None:
         rects = [(-10, -10, 50, 50), (50, 50, -10, -10), (0, 0, 2, 2), (90, 90, 200, 200)]

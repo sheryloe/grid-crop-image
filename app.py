@@ -34,7 +34,7 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
     IMAGEGRAB_IMPORT_ERROR = exc
 
 
-APP_TITLE = "Grid Crop Studio"
+APP_TITLE = f"Grid Crop Studio {core.__version__}"
 SUPPORTED_FILE_TYPES = [
     ("그림 파일", "*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff"),
     ("모든 파일", "*.*"),
@@ -185,6 +185,7 @@ class AutoCropApp:
         self.instruction_var = tk.StringVar(
             value=(
                 "빈 화면에서 드래그하면 자를 영역이 생깁니다. 영역 안을 끌면 이동하고, 모서리를 끌면 크기가 바뀝니다. "
+                "4칸·9칸으로 나눈 뒤 두 칸 사이 경계를 끌면 두 칸이 함께 맞춰집니다. "
                 "Shift를 누르면 정사각형으로 고정되고, Ctrl+마우스휠로 확대/축소할 수 있습니다."
             )
         )
@@ -1454,8 +1455,11 @@ class AutoCropApp:
             return
 
         handle_pos = self._find_handle_at(*point)
+        shared = None if handle_pos else self._find_shared_edge_at(*point)
         if handle_pos:
             self.canvas.config(cursor=self.HANDLE_CURSORS[handle_pos])
+        elif shared is not None:
+            self.canvas.config(cursor="sb_h_double_arrow" if shared.axis == "x" else "sb_v_double_arrow")
         elif self._find_rectangle_at(*point) is not None:
             self.canvas.config(cursor="fleur")
         else:
@@ -1487,6 +1491,20 @@ class AutoCropApp:
                 self.status_var.set("고른 영역의 크기를 바꾸는 중입니다.")
                 self._update_controls()
                 return
+
+        shared = self._find_shared_edge_at(x, y)
+        if shared is not None:
+            self.selected_rectangle_index = None
+            self.drag_context = {
+                "kind": "edge",
+                "edge": shared,
+                "start": x if shared.axis == "x" else y,
+                "origin": [r.normalized() for r in self.rectangles],
+            }
+            self.status_var.set("두 칸 사이 경계를 옮기는 중입니다. 두 칸이 함께 바뀝니다.")
+            self._refresh_overlays()
+            self._update_controls()
+            return
 
         index = self._find_rectangle_at(x, y)
         self.selected_rectangle_index = index
@@ -1526,7 +1544,18 @@ class AutoCropApp:
         x, y = point
         kind = self.drag_context["kind"]
 
-        if kind == "resize":
+        if kind == "edge":
+            edge = self.drag_context["edge"]
+            origin = self.drag_context["origin"]
+            assert isinstance(edge, core.SharedEdge) and isinstance(origin, list)
+            delta = (x if edge.axis == "x" else y) - int(self.drag_context["start"])
+            moved = core.move_shared_edge(
+                [r.as_tuple() for r in origin], edge, delta, self.loaded_image.width, self.loaded_image.height
+            )
+            for index in (edge.first, edge.second):
+                self.rectangles[index] = CropRectangle.from_tuple(moved[index])
+            self.is_configured = False
+        elif kind == "resize":
             index = int(self.drag_context["index"])
             handle = str(self.drag_context["handle"])
             origin = self.drag_context["origin"]
@@ -1563,6 +1592,12 @@ class AutoCropApp:
         self._update_controls()
 
     def on_left_release(self, _event: tk.Event) -> None:
+        if self.drag_context and self.drag_context.get("kind") == "edge":
+            self.drag_context = None
+            self.status_var.set("두 칸 사이 경계를 옮겼습니다. 더 고치거나 '확정'을 누르세요.")
+            self._refresh_overlays()
+            self._update_controls()
+            return
         if self.selected_rectangle_index is None or not self.drag_context:
             self.drag_context = None
             return
@@ -1614,7 +1649,11 @@ class AutoCropApp:
 
     def cancel_current_drag(self) -> None:
         context = self.drag_context
-        if context and self.selected_rectangle_index is not None:
+        if context and context.get("kind") == "edge" and isinstance(context.get("origin"), list):
+            self.rectangles = list(context["origin"])  # type: ignore[arg-type]
+            self.status_var.set("끌던 것을 취소했습니다.")
+            self._refresh_overlays()
+        elif context and self.selected_rectangle_index is not None:
             kind = context.get("kind")
             if kind == "create":
                 del self.rectangles[self.selected_rectangle_index]
@@ -2650,6 +2689,13 @@ class AutoCropApp:
             if rectangle.left <= x <= rectangle.right and rectangle.top <= y <= rectangle.bottom:
                 return index
         return None
+
+    def _find_shared_edge_at(self, x: int, y: int) -> core.SharedEdge | None:
+        """이웃 두 칸의 공유 경계(또는 그 사이 여백) 위인지. 화면에서 손잡이 크기만큼 여유를 둔다."""
+        if len(self.rectangles) < 2:
+            return None
+        tolerance = HANDLE_SIZE / max(self.zoom, 1e-6)
+        return core.find_shared_edge([r.as_tuple() for r in self.rectangles], x, y, tolerance)
 
     def _find_handle_at(self, x: int, y: int) -> str | None:
         if self.selected_rectangle_index is None or self.selected_rectangle_index >= len(self.rectangles):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import tkinter as tk
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from helpers import make_grid_image, scratch_tempdir
 
@@ -127,6 +128,49 @@ class AppWiringTest(unittest.TestCase):
                 )
         finally:
             self.root.withdraw()
+
+    def _mouse(self, handler, image_x: int, image_y: int, state: int = 0) -> None:
+        """그림 좌표를 화면(캔버스) 좌표로 바꿔 마우스 처리기를 부른다."""
+        zoom = self.app.zoom
+        event = SimpleNamespace(
+            x=round(image_x * zoom - self.app.canvas.canvasx(0)),
+            y=round(image_y * zoom - self.app.canvas.canvasy(0)),
+            state=state,
+        )
+        handler(event)
+
+    def test_drag_shared_edge_moves_both_cells(self) -> None:
+        """자동으로 나눈 4칸에서 가운데 세로 경계를 끌면 왼쪽·오른쪽 칸이 함께 바뀐다."""
+        image, expected = make_grid_image([300, 320], [200, 220], gutter=20, border=10)
+        self.load(image)
+        self.app._set_zoom(1.0, reset_view=True)
+        self.assertTrue(self.app._apply_auto_grid(2, 2, detect_gutters=True, confirm=True))
+        gutter_x = (expected[0][2] + expected[1][0]) // 2  # 왼쪽 위 칸과 오른쪽 위 칸 사이
+        self._mouse(self.app.on_left_press, gutter_x, 100)
+        self.assertEqual(self.app.drag_context["kind"], "edge")
+        self._mouse(self.app.on_left_drag, gutter_x + 25, 100)
+        self._mouse(self.app.on_left_release, gutter_x + 25, 100)
+        rects = [r.as_tuple() for r in self.app.rectangles]
+        self.assertEqual(rects[0][2], expected[0][2] + 25)
+        self.assertEqual(rects[1][0], expected[1][0] + 25)
+        self.assertEqual(rects[2:], expected[2:])  # 아래 두 칸은 그대로
+        self.assertFalse(self.app.is_configured)  # 고친 뒤에는 다시 확정해야 한다
+        self.assertIsNone(self.app.drag_context)
+
+    def test_escape_cancels_edge_drag(self) -> None:
+        image, expected = make_grid_image([300, 320], [200, 220], gutter=20, border=10)
+        self.load(image)
+        self.app._set_zoom(1.0, reset_view=True)
+        self.app._apply_auto_grid(2, 2, detect_gutters=True, confirm=True)
+        gutter_y = (expected[0][3] + expected[2][1]) // 2
+        self._mouse(self.app.on_left_press, 100, gutter_y)
+        self._mouse(self.app.on_left_drag, 100, gutter_y - 40)
+        self.assertNotEqual([r.as_tuple() for r in self.app.rectangles], expected)
+        self.app.cancel_current_drag()
+        self.assertEqual([r.as_tuple() for r in self.app.rectangles], expected)
+
+    def test_window_title_shows_version(self) -> None:
+        self.assertIn(core.__version__, self.root.title())
 
     def test_zoom_is_capped_for_huge_images(self) -> None:
         from PIL import Image

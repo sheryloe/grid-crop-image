@@ -32,6 +32,8 @@ except ImportError:  # pragma: no cover - app.py가 실행 시 안내한다
     ImageStat = None
 
 
+__version__ = "1.1.0"  # 프로그램 판 번호(창 제목·배포 압축 파일 이름이 여기서 가져간다)
+
 Rect = tuple[int, int, int, int]
 
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
@@ -112,6 +114,95 @@ def scale_rects(rects: list[Rect], from_size: tuple[int, int], to_size: tuple[in
     return [(round(l * rx), round(t * ry), round(r * rx), round(b * ry)) for l, t, r, b in rects]
 
 
+@dataclass(frozen=True)
+class SharedEdge:
+    """이웃한 두 칸이 맞닿은(또는 여백을 사이에 둔) 경계.
+
+    axis='x'는 세로 경계(좌우로 끈다): first의 오른쪽 변과 second의 왼쪽 변.
+    axis='y'는 가로 경계(위아래로 끈다): first의 아래 변과 second의 위 변.
+    """
+
+    axis: str
+    first: int
+    second: int
+
+
+SHARED_EDGE_MIN_OVERLAP = 0.5  # 두 칸이 겹쳐 마주 보는 길이가 짧은 쪽 변의 이 비율 이상이어야 이웃
+SHARED_EDGE_MAX_GAP_RATIO = 0.25  # 사이 여백이 작은 칸 크기의 이 비율 이하여야 이웃
+
+
+def find_shared_edge(rects: list[Rect], x: float, y: float, tolerance: float) -> SharedEdge | None:
+    """(x, y) 가까이에 있는 이웃 두 칸의 공유 경계. 경계선 ±tolerance와 사이 여백 안을 잡는다."""
+    best: SharedEdge | None = None
+    best_dist = float("inf")
+    boxes = [normalize_rect(r) for r in rects]
+    # 마우스 가까운 칸만 짝지어 본다(50×50칸이어도 마우스를 움직일 때 느려지지 않게)
+    near = []
+    for i, (l, t, r, b) in enumerate(boxes):
+        pad = tolerance + SHARED_EDGE_MAX_GAP_RATIO * max(r - l, b - t)
+        if l - pad <= x <= r + pad and t - pad <= y <= b + pad:
+            near.append(i)
+    for i in near:
+        a = boxes[i]
+        for j in near:
+            b = boxes[j]
+            if i == j:
+                continue
+            for axis in ("x", "y"):
+                if axis == "x":
+                    a_end, b_start = a[2], b[0]
+                    a_len, b_len = a[2] - a[0], b[2] - b[0]
+                    cross_lo, cross_hi = max(a[1], b[1]), min(a[3], b[3])
+                    shorter = min(a[3] - a[1], b[3] - b[1])
+                    along, across = x, y
+                else:
+                    a_end, b_start = a[3], b[1]
+                    a_len, b_len = a[3] - a[1], b[3] - b[1]
+                    cross_lo, cross_hi = max(a[0], b[0]), min(a[2], b[2])
+                    shorter = min(a[2] - a[0], b[2] - b[0])
+                    along, across = y, x
+                gap = b_start - a_end
+                if gap < -tolerance or gap > max(tolerance, min(a_len, b_len) * SHARED_EDGE_MAX_GAP_RATIO):
+                    continue
+                if shorter <= 0 or cross_hi - cross_lo < shorter * SHARED_EDGE_MIN_OVERLAP:
+                    continue
+                if not cross_lo <= across <= cross_hi:
+                    continue
+                lo, hi = min(a_end, b_start) - tolerance, max(a_end, b_start) + tolerance
+                if not lo <= along <= hi:
+                    continue
+                dist = abs(along - (a_end + b_start) / 2)
+                if dist < best_dist:
+                    best, best_dist = SharedEdge(axis, i, j), dist
+    return best
+
+
+def move_shared_edge(
+    rects: list[Rect], edge: SharedEdge, delta: int, width: int, height: int, min_size: int = MIN_RECT_SIZE
+) -> list[Rect]:
+    """공유 경계를 delta만큼 옮긴다. 두 칸이 함께 바뀌고 사이 여백 폭은 그대로다.
+    어느 칸도 min_size보다 작아지거나 그림 밖으로 나가지 않게 delta를 줄인다."""
+    result = [normalize_rect(r) for r in rects]
+    a = list(result[edge.first])
+    b = list(result[edge.second])
+    if edge.axis == "x":
+        end_i, start_i, limit = 2, 0, width
+        a_lo, b_hi = a[0], b[2]
+    else:
+        end_i, start_i, limit = 3, 1, height
+        a_lo, b_hi = a[1], b[3]
+    lowest = (a_lo + min_size) - a[end_i]  # first가 너무 작아지지 않게
+    highest = (b_hi - min_size) - b[start_i]  # second가 너무 작아지지 않게
+    lowest = max(lowest, -b[start_i])
+    highest = min(highest, limit - a[end_i])
+    delta = max(lowest, min(highest, delta)) if lowest <= highest else 0
+    a[end_i] += delta
+    b[start_i] += delta
+    result[edge.first] = (a[0], a[1], a[2], a[3])
+    result[edge.second] = (b[0], b[1], b[2], b[3])
+    return result
+
+
 def uniform_grid(width: int, height: int, rows: int, cols: int, padding: int = 0) -> list[Rect]:
     """행·열 수대로 균등하게 나눈 영역. padding은 칸 사이와 바깥 여백(픽셀)."""
     if rows < 1 or cols < 1:
@@ -147,6 +238,18 @@ GUTTER_MAX_WIDTH_RATIO = 0.2  # 칸 크기의 이 비율보다 넓은 띠는 거
 MARGIN_MAX_RATIO = 0.2  # 바깥 테두리는 그림 변의 이 비율까지만 인정
 GUTTER_ANALYSIS_MAX_SIDE = 3000  # 이보다 큰 그림은 줄여서 분석
 
+# 경계선 세기: 줄을 길이 방향으로 토막 내 평균한 뒤, 옆 줄과 토막별 차이의 중앙값.
+# 칸 경계는 그림 끝에서 끝까지 곧게 이어지므로 거의 모든 토막에서 차이가 나고,
+# 칸 안의 물체 윤곽은 일부 토막에서만 차이가 나서 중앙값이 작다.
+# 토막 평균은 잡음·잔무늬를 지우고, 길이 방향 그라데이션은 옆 줄과 같아서 차이가 0이다.
+EDGE_SEGMENTS = 32
+EDGE_MIN_STRENGTH = 4.0  # 경계로 볼 최소 차이(0~255)
+EDGE_REL_STRENGTH = 3.0  # 찾는 범위 안 보통 값(중앙값)의 이 배수 이상이어야 경계
+EDGE_PARTNER_RATIO = 0.5  # 여백 안(경계 사이)의 값은 경계 세기의 이 비율 미만이어야 고른 여백
+EDGE_PARTNER_MIN_RATIO = 0.1  # 여백의 반대쪽 경계는 센 쪽의 이 비율 이상(칸마다 여백과의 대비가 크게 다르다)
+EDGE_BORDER_MIN = 8.0  # 고른 띠 없이 경계선만으로 바깥 테두리를 인정할 최소 세기
+EDGE_SNAP = 3  # 고른 띠의 끝을 이 거리(px) 안의 경계선에 맞춘다
+
 
 @dataclass
 class GridSplit:
@@ -169,6 +272,117 @@ def line_std_profile(gray: "Image.Image", axis: str) -> list[float]:
     return [ImageStat.Stat(gray.crop((0, y, width, y + 1))).stddev[0] for y in range(height)]
 
 
+def line_edge_profile(gray: "Image.Image", axis: str) -> list[float]:
+    """axis='x'면 x-1열과 x열 사이, 'y'면 y-1행과 y행 사이의 경계선 세기(0번은 0)."""
+    if axis == "y":
+        gray = gray.transpose(Image.Transpose.TRANSPOSE)
+    width, height = gray.size
+    segments = max(1, min(EDGE_SEGMENTS, height // 4))
+    data = gray.resize((width, segments), Image.Resampling.BOX).tobytes()
+    middle = segments // 2
+    profile = [0.0] * width
+    for x in range(1, width):
+        diffs = sorted(abs(data[r * width + x] - data[r * width + x - 1]) for r in range(segments))
+        profile[x] = float(diffs[middle])
+    return profile
+
+
+def _edge_threshold(edges: list[float], lo: int, hi: int) -> float:
+    window = sorted(edges[max(lo, 1):hi])
+    if not window:
+        return EDGE_MIN_STRENGTH
+    return max(EDGE_MIN_STRENGTH, window[len(window) // 2] * EDGE_REL_STRENGTH)
+
+
+def _edge_peaks(edges: list[float], lo: int, hi: int, threshold: float) -> list[int]:
+    """lo~hi 안에서 threshold 이상인 봉우리(양옆보다 센 자리)."""
+    n = len(edges)
+    peaks = []
+    for i in range(max(lo, 1), min(hi, n)):
+        value = edges[i]
+        if value >= threshold and value >= edges[i - 1] and (i + 1 >= n or value > edges[i + 1]):
+            peaks.append(i)
+    return peaks
+
+
+# 찾은 여백의 확실한 정도
+GAP_BOTH = "both"  # 양쪽 끝 모두 경계선으로 확인
+GAP_TOUCH = "touch"  # 여백 없이 붙은 칸(경계선 하나)
+GAP_START = "start"  # 앞쪽 끝만 경계선으로 확인(뒤쪽은 고른 띠가 끝나는 자리)
+GAP_END = "end"  # 뒤쪽 끝만 확인
+GAP_RUN = "run"  # 경계선 없이 고른 띠만
+GAP_NONE = "none"  # 못 찾아 같은 간격으로 자름
+
+Gap = tuple[int, int, str]
+
+
+def _snap_band(edges: list[float], run_s: int, run_e: int, threshold: float) -> Gap:
+    """고른 띠 [run_s, run_e)의 양 끝을 가까운 경계선에 맞춘다.
+
+    띠 안팎 EDGE_SNAP 안의 경계선이 둘 이상이면 처음~끝을 여백으로 본다(흰 바탕 칸이
+    흰 여백과 붙어 띠가 넓어진 경우 띠 안의 진짜 여백 경계를 고른다).
+    """
+    peaks = _edge_peaks(edges, run_s - EDGE_SNAP, run_e + EDGE_SNAP + 1, threshold)
+    if len(peaks) >= 2:
+        return peaks[0], peaks[-1], GAP_BOTH
+    if len(peaks) == 1:
+        p = peaks[0]
+        if abs(p - run_s) <= EDGE_SNAP:
+            return p, max(p, run_e), GAP_START
+        if abs(p - run_e) <= EDGE_SNAP:
+            return min(run_s, p), p, GAP_END
+    return run_s, run_e, GAP_RUN
+
+
+def _edge_band(edges: list[float], lo: int, hi: int, threshold: float, max_width: float) -> Gap | None:
+    """고른 띠가 없을 때(무늬·그라데이션 여백, 붙은 칸) 경계선만으로 여백을 찾는다."""
+    peaks = _edge_peaks(edges, lo, hi, threshold)
+    if not peaks:
+        return None
+    first = max(peaks, key=edges.__getitem__)
+    best: int | None = None
+    for other in peaks:
+        if not 2 <= abs(other - first) <= max_width:
+            continue
+        if edges[other] < EDGE_PARTNER_MIN_RATIO * edges[first]:
+            continue
+        a, b = sorted((first, other))
+        inner = edges[a + 2 : b - 1]
+        if inner and max(inner) >= EDGE_PARTNER_RATIO * min(edges[first], edges[other]):
+            continue  # 사이가 고르지 않으면 여백이 아니다
+        if best is None or edges[other] > edges[best]:
+            best = other
+    if best is None:
+        return first, first, GAP_TOUCH
+    return min(first, best), max(first, best), GAP_BOTH
+
+
+def _trim_start(low: list[bool], edges: list[float] | None, limit: int) -> int:
+    """앞쪽 바깥 테두리가 끝나는 자리(없으면 0)."""
+    n = len(low)
+    run = 0
+    while run < n and run < limit and low[run]:
+        run += 1
+    if run >= limit:
+        run = 0
+    if edges is None:
+        return run
+    threshold = _edge_threshold(edges, 1, limit)
+    if run > 0:
+        # 고른 띠 안이나 끝의 가장 센 경계선. 경계선이 없으면 칸 안의 흰 바탕이 띠로 보인 것이다.
+        peaks = _edge_peaks(edges, 1, min(run + EDGE_SNAP + 1, limit), threshold)
+        return max(peaks, key=edges.__getitem__) if peaks else 0
+    # 무늬·그라데이션 테두리: 앞쪽이 고르고(안쪽 값이 경계의 절반 미만) 뚜렷한 경계선 중 가장 센 자리
+    best, best_value = 0, 0.0
+    for p in _edge_peaks(edges, 1, limit, max(threshold, EDGE_BORDER_MIN)):
+        inner = edges[1 : max(1, p - 1)]
+        if inner and max(inner) >= EDGE_PARTNER_RATIO * edges[p]:
+            continue
+        if edges[p] > best_value:
+            best, best_value = p, edges[p]
+    return best
+
+
 def _low_run_around(low: list[bool], index: int, start: int, end: int) -> tuple[int, int]:
     """index를 포함하는 '고른 띠' 구간 [s, e)를 start~end 안에서 넓힌다."""
     s = index
@@ -180,34 +394,65 @@ def _low_run_around(low: list[bool], index: int, start: int, end: int) -> tuple[
     return s, e
 
 
+@dataclass
+class AxisResult:
+    """한 축의 분석 결과(분석용으로 줄인 그림 좌표)."""
+
+    n: int
+    start: int
+    end: int
+    gaps: list[Gap]
+    edges: list[float] | None = None
+
+    @property
+    def found(self) -> int:
+        return sum(1 for _s, _e, kind in self.gaps if kind != GAP_NONE)
+
+    def spans(self) -> list[tuple[int, int]]:
+        spans: list[tuple[int, int]] = []
+        cursor = self.start
+        for gap_s, gap_e, _kind in self.gaps:
+            spans.append((cursor, max(cursor, gap_s)))
+            cursor = max(cursor, gap_e)
+        spans.append((cursor, max(cursor, self.end)))
+        return spans
+
+
 def find_axis_spans(
     stds: list[float],
     parts: int,
     threshold: float = GUTTER_STD_THRESHOLD,
+    edges: list[float] | None = None,
 ) -> tuple[list[tuple[int, int]], int]:
     """한 축을 parts칸으로 나눈 [시작, 끝) 구간들과 찾은 거터 수.
 
     양 끝의 고른 띠는 바깥 테두리로 보고 잘라 낸다. 칸 경계는 기대 위치 근처의
     고른 띠를 쓰고, 못 찾으면 그 경계만 균등 위치로 나눈다.
+    edges(line_edge_profile)를 주면 띠의 끝을 경계선에 맞추고, 고른 띠가 없는
+    무늬·그라데이션 여백과 여백 없이 붙은 칸도 경계선으로 찾는다.
     """
+    result = analyze_axis(stds, parts, threshold, edges)
+    return result.spans(), result.found
+
+
+def analyze_axis(
+    stds: list[float],
+    parts: int,
+    threshold: float = GUTTER_STD_THRESHOLD,
+    edges: list[float] | None = None,
+) -> AxisResult:
     n = len(stds)
     if parts < 1:
         raise ValueError("칸 수는 1 이상이어야 합니다.")
     if n == 0:
-        return [], 0
+        return AxisResult(0, 0, 0, [], edges)
+    if edges is not None and len(edges) != n:
+        raise ValueError("경계선 세기와 표준편차의 길이가 다릅니다.")
     low = [s <= threshold for s in stds]
 
     limit = max(1, int(n * MARGIN_MAX_RATIO))
-    start = 0
-    while start < n and start < limit and low[start]:
-        start += 1
-    if start >= limit:
-        start = 0
-    end = n
-    while end > 0 and n - end < limit and low[end - 1]:
-        end -= 1
-    if n - end >= limit:
-        end = n
+    start = _trim_start(low, edges, limit)
+    end = n - _trim_start(low[::-1], _reverse_edges(edges), limit)
     if end - start < parts * 2:
         start, end = 0, n
 
@@ -216,13 +461,13 @@ def find_axis_spans(
     window = cell * GUTTER_SEARCH_RATIO
     max_width = cell * GUTTER_MAX_WIDTH_RATIO
 
-    edges: list[tuple[int, int]] = []
-    found = 0
+    gaps: list[Gap] = []
     for k in range(1, parts):
         expected = start + cell * k
         lo = max(start + 1, int(expected - window))
         hi = min(end - 1, int(expected + window) + 1)
-        best: tuple[int, int] | None = None
+        edge_threshold = _edge_threshold(edges, lo, hi) if edges is not None else 0.0
+        best: Gap | None = None
         best_dist = float("inf")
         i = lo
         while i < hi:
@@ -231,25 +476,80 @@ def find_axis_spans(
                 continue
             run_s, run_e = _low_run_around(low, i, start, end)
             i = run_e
-            if run_e - run_s > max_width:
+            band: Gap = (run_s, run_e, GAP_RUN)
+            if edges is not None:
+                band = _snap_band(edges, run_s, run_e, edge_threshold)
+            if band[1] - band[0] > max_width:
                 continue
-            dist = abs((run_s + run_e) / 2 - expected)
+            dist = abs((band[0] + band[1]) / 2 - expected)
             if dist < best_dist:
-                best, best_dist = (run_s, run_e), dist
-        if best is not None:
-            edges.append(best)
-            found += 1
-        else:
+                best, best_dist = band, dist
+        if best is None and edges is not None:
+            best = _edge_band(edges, lo, hi, edge_threshold, max_width)
+        if best is None:
             cut = round(expected)
-            edges.append((cut, cut))
+            best = (cut, cut, GAP_NONE)
+        gaps.append(best)
+    return AxisResult(n, start, end, gaps, edges)
 
-    spans: list[tuple[int, int]] = []
-    cursor = start
-    for gap_s, gap_e in edges:
-        spans.append((cursor, max(cursor, gap_s)))
-        cursor = gap_e
-    spans.append((cursor, end))
-    return spans, found
+
+def _reverse_edges(edges: list[float] | None) -> list[float] | None:
+    """축을 뒤집었을 때의 경계선 세기(뒤집힌 i번 자리 = 원래 n-i번 자리)."""
+    if edges is None:
+        return None
+    n = len(edges)
+    return [0.0] + [edges[n - i] for i in range(1, n)]
+
+
+def _peak_near(edges: list[float], position: int, minimum: float) -> int | None:
+    """position ± EDGE_SNAP 안에서 minimum 이상인 가장 센 경계선 자리."""
+    lo = max(1, position - EDGE_SNAP)
+    hi = min(len(edges), position + EDGE_SNAP + 1)
+    candidates = [i for i in range(lo, hi) if edges[i] >= minimum]
+    return max(candidates, key=edges.__getitem__) if candidates else None
+
+
+def reconcile_axes(results: list[AxisResult]) -> None:
+    """AI 격자 그림은 칸 사이 여백 폭과 바깥 테두리 폭이 어디서나 같다는 점으로
+    한쪽만 확인된 여백·테두리를 고친다(두 축 결과를 함께 본다)."""
+    widths = sorted(e - s for r in results for s, e, kind in r.gaps if kind == GAP_BOTH)
+    if not widths:
+        widths = [0 for r in results for _s, _e, kind in r.gaps if kind == GAP_TOUCH]
+    if widths:
+        ref = widths[len(widths) // 2]
+        for r in results:
+            if r.edges is None:
+                continue
+            for index, (s, e, kind) in enumerate(r.gaps):
+                if kind == GAP_START:
+                    peak = _peak_near(r.edges, s + ref, EDGE_MIN_STRENGTH / 2) if ref else None
+                    r.gaps[index] = (s, peak if peak is not None else s + ref, GAP_BOTH)
+                elif kind == GAP_END:
+                    peak = _peak_near(r.edges, e - ref, EDGE_MIN_STRENGTH / 2) if ref else None
+                    r.gaps[index] = (peak if peak is not None else e - ref, e, GAP_BOTH)
+                elif kind == GAP_TOUCH and ref > 0:
+                    # 여백 반대쪽 경계가 약해 붙은 칸으로 보였을 수 있다
+                    after = _peak_near(r.edges, s + ref, EDGE_MIN_STRENGTH)
+                    before = _peak_near(r.edges, s - ref, EDGE_MIN_STRENGTH)
+                    if after is not None and (before is None or r.edges[after] >= r.edges[before]):
+                        r.gaps[index] = (s, after, GAP_BOTH)
+                    elif before is not None:
+                        r.gaps[index] = (before, s, GAP_BOTH)
+
+    borders = [b for r in results for b in (r.start, r.n - r.end) if b > 0]
+    if borders:
+        ref_border = sorted(borders)[len(borders) // 2]
+        for r in results:
+            if r.edges is None or r.n < ref_border * 4:
+                continue
+            if r.start == 0:
+                peak = _peak_near(r.edges, ref_border, EDGE_MIN_STRENGTH)
+                if peak is not None:
+                    r.start = peak
+            if r.end == r.n:
+                peak = _peak_near(r.edges, r.n - ref_border, EDGE_MIN_STRENGTH)
+                if peak is not None:
+                    r.end = peak
 
 
 def split_grid_auto(image: "Image.Image", rows: int, cols: int, detect_gutters: bool = True) -> GridSplit:
@@ -268,8 +568,11 @@ def split_grid_auto(image: "Image.Image", rows: int, cols: int, detect_gutters: 
         scale = GUTTER_ANALYSIS_MAX_SIDE / longest
         gray = gray.resize((max(1, round(width * scale)), max(1, round(height * scale))), Image.Resampling.BOX)
 
-    x_spans, found_x = find_axis_spans(line_std_profile(gray, "x"), cols)
-    y_spans, found_y = find_axis_spans(line_std_profile(gray, "y"), rows)
+    x_result = analyze_axis(line_std_profile(gray, "x"), cols, edges=line_edge_profile(gray, "x"))
+    y_result = analyze_axis(line_std_profile(gray, "y"), rows, edges=line_edge_profile(gray, "y"))
+    reconcile_axes([x_result, y_result])
+    x_spans, found_x = x_result.spans(), x_result.found
+    y_spans, found_y = y_result.spans(), y_result.found
 
     def back(value: int, limit: int) -> int:
         return min(limit, max(0, round(value / scale)))
