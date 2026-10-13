@@ -87,6 +87,17 @@ build_exe.bat
 
 작업 기록·글자 읽기 설정은 실행 파일(또는 `app.py`)이 있는 폴더에 저장하고, 그 폴더에 쓸 수 없으면 사용자 폴더의 `.grid_crop_studio`에 저장합니다.
 
+## 다른 PC용 배포본
+
+```bash
+py scripts/make_release.py               # 빌드 후 묶기
+py scripts/make_release.py --skip-build  # 지금 dist 폴더만 묶기
+```
+
+- 결과: `release\AutoCropSplitter-<판>.zip` (exe, `_internal`, `사용안내.txt`)
+- 판 번호는 `gridcrop_core.__version__` 한 곳에 두고 창 제목에도 보입니다.
+- 안내서 원본은 `scripts/사용안내.txt`(`{version}` 자리에 판 번호가 들어갑니다).
+
 ## C++ 실행기(고급, 선택)
 
 ```bash
@@ -104,6 +115,8 @@ cmake --build cpp/ocr_engine/build --config Release
 - `gridcrop_core.py`: 화면 없이 시험하는 핵심 처리(칸·거터, 배치 파일, 작업 기록, Ollama 요청)
 - `tests/`: 단위 시험
 - `scripts/ocr_probe.py`: 글자 읽기 점검 도구
+- `scripts/make_grid_samples.py`, `scripts/measure_grid.py`: 4칸·9칸 여백 찾기 시험 그림 만들기·측정
+- `scripts/make_release.py`, `scripts/사용안내.txt`: 배포 zip 만들기
 - `build_exe.bat`, `AutoCropSplitter.spec`: 실행 파일 빌드
 - `WIKI.md`: 사용 안내
 - `cpp/ocr_engine/`: 선택형 C++ 실행기

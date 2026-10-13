@@ -29,7 +29,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['numpy'],  # Pillow를 모을 때 따라 들어오지만 이 앱은 쓰지 않는다(배포본 크기 줄이기)
     noarchive=False,
     optimize=0,
 )
