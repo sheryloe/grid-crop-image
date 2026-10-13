@@ -1,121 +1,102 @@
-# Grid Crop Studio Wiki
+# Grid Crop Studio 위키
 
-## Overview
+## 개요
 
-`Grid Crop Studio` is a Windows image cutting workspace for people who repeatedly slice screenshots, blog images, store listings, or card-style layouts.
+`Grid Crop Studio`는 화면 캡처, 블로그 그림, 상품 목록, 카드형 배치, AI가 한 장에 여러 칸으로 그린 그림을 반복해서 잘라야 하는 사람을 위한 윈도우 작업 도구입니다.
 
-It is focused on:
+중심 기능:
 
-- fast crop selection
-- reusable JSON layouts
-- repeated batch output
-- simple history tracking
-- optional OCR expansion
+- 빠른 영역 고르기
+- AI 그림 4칸·9칸 자동 나누기
+- 다시 쓰는 JSON 배치
+- 여러 장 일괄 자르기
+- 작업 기록
+- 내 PC Ollama로 글자 읽기
 
-## Quick Start
+## 빠른 시작
 
-1. Press `사진 열기` or `붙여넣기`
-2. Press `저장 폴더`
-3. Draw one or more crop areas
-4. Press `확정`
-5. Press `잘라서 저장`
+1. 「사진 열기」나 「붙여넣기」(`Ctrl+V`)
+2. 「저장 폴더」
+3. 영역을 그리거나 「4칸」「9칸」「칸 나누기」
+4. 「확정」
+5. 「잘라서 저장」
 
-## Main Screens
+## 화면 구성
 
-### Top Action Area
+### 위쪽 버튼
 
-- `사진 가져오기`: `사진 열기`, `붙여넣기`, `저장`, `불러오기`
-- `작업 실행`: `여러 장`, `다시`, `기록`, `글자 읽기`, `모델 넣기`
-- `화면 조절`: `화면 맞춤`, `지우기`, `전체 지우기`, `칸 나누기`, `확정`
+- 사진 가져오기: 「사진 열기」「붙여넣기」「저장」「불러오기」
+- 작업 실행: 「여러 장」「다시」「기록」「글자 읽기」「읽기 설정」
+- 화면 조절: 「-」「+」「100%」「화면 맞춤」
 
-### Work Canvas
+### 그림 영역
 
-- draw crop areas directly on the main canvas
-- drag inside an area to move it
-- drag handles to resize it
-- use `Shift` to keep a square
-- use `Ctrl + mouse wheel` to zoom
+- 그림 위 머리글: 사진 이름·크기, 「지우기」「전체 지우기」「칸 나누기」「확정」, 영역 수
+- 빈 곳을 끌면 새 영역, 영역 안을 끌면 이동, 손잡이를 끌면 크기 변경
+- `Shift`: 정사각형 / 비율 유지, `Ctrl+휠`: 확대·축소, `Delete`·오른쪽 클릭: 영역 지우기, `Esc`: 끌던 것 취소
 
-### Right Info Panel
+### 오른쪽 칸
 
-- current image summary
-- crop area count
-- output folder shortcut buttons
-- action-focused status hints
+- 저장 폴더와 「저장 폴더」「현재 폴더」
+- AI 그림 빠르게 나누기: 「4칸」「9칸」, 「칸 사이 여백 찾아 나누기」
+- 「잘라서 저장」
+- 바로 하기 안내
 
-## Reusable Layouts
+## AI 그림 나누기
 
-Use `저장` to save crop areas as JSON.
+「4칸」「9칸」은 2×2·3×3 영역을 만들고 확정까지 한 뒤, 저장 폴더가 정해져 있으면 바로 저장할지 묻습니다.
 
-Saved layouts can be:
+「칸 사이 여백 찾아 나누기」를 켜 두면 사진의 세로줄·가로줄마다 밝기 흩어짐을 재서, 기대 경계 근처에서 고른(단색) 띠를 찾아 그 띠를 빼고 자릅니다. 바깥 테두리도 잘라 냅니다.
+여백을 못 찾은 경계는 같은 간격으로 자르고, 결과 안내에 몇 곳을 찾았는지 알려 줍니다.
 
-- loaded later with `불러오기`
-- reused in `여러 장`
-- scaled to match different image sizes when needed
+「칸 나누기」 창에서도 「여백 자동 찾기」를 고를 수 있고, 「여러 장」에서는 「AI 그림 자동 나누기」 규칙으로 사진마다 따로 여백을 찾습니다.
 
-## Batch Processing
+## 배치 저장·불러오기
 
-Use `여러 장` when one crop layout needs to be applied to many image files.
+「저장」은 영역을 JSON으로 저장합니다. 저장한 배치는
 
-Batch mode supports:
+- 「불러오기」로 다시 쓰고
+- 「여러 장」에서 규칙으로 쓰며
+- 크기가 다른 사진에는 비율대로 맞춰집니다.
 
-- file list input
-- folder scan input
-- current layout or JSON layout source
-- output folder selection
-- optional subfolder creation per source image
-- failed item retry with `다시`
+깨진 파일이나 숫자가 아닌 값이 있으면 몇 번째 영역이 문제인지 한글로 알려 줍니다.
 
-## History
+## 여러 장
 
-The program saves work history to:
+- 사진 넣기 / 폴더 넣기(하위 폴더 포함, 이미 잘라 저장한 `_rect_` 조각은 뺌)
+- 규칙: 지금 창의 확정 영역 / 저장한 배치 파일 / AI 그림 자동 나누기(4칸·9칸)
+- 저장 폴더, 원본 이름으로 하위 폴더 만들기
+- 끝나면 저장 개수·실패 이유를 보여 주고, 「다시」로 실패한 사진만 다시 돌립니다
+- 작업 중에는 창을 닫을 수 없습니다(기록이 빠지지 않게)
 
-```text
-.crop_history.jsonl
-```
+## 글자 읽기
 
-It stores:
+- 영역이 있으면 영역마다, 없으면 사진 전체를 읽습니다
+- 결과창: 「전부 복사」「텍스트로 저장」
+- 기본은 내 PC Ollama(`http://127.0.0.1:11434`). 주소는 내 PC나 사내망 IP만 허용합니다
+- 「읽기 설정」 → 「모델 찾기」로 그림 읽기(`vision`) 모델을 고릅니다. 없으면 `ollama pull qwen2.5vl:7b` 처럼 받을 모델을 안내합니다
+- 고급: 「C++ 실행기」를 고르면 `cpp/ocr_engine` 실행기와 모델 파일을 씁니다(「모델 넣기」로 ZIP에서 넣기)
 
-- single export jobs
-- batch export jobs
-- OCR jobs
+## 작업 기록
 
-The history viewer can filter by:
+파일: 실행 파일 폴더의 `.crop_history.jsonl`
 
-- date
-- job type
-- OCR text
-- sort order
+- 한 장 저장, 여러 장 저장, 글자 읽기를 남깁니다
+- 5MB가 넘으면 `.crop_history.1.jsonl`로 넘기고 최근 3개 파일까지 보관합니다
+- 한 줄씩 한 번에 덧붙이고, 쓰다 끊긴 줄·깨진 줄은 읽을 때 건너뜁니다
+- 「기록」 창은 최근 200건을 먼저 읽고 「더 보기」로 이어 읽습니다
+- 날짜, 작업 종류, 읽은 글자, 정렬로 찾을 수 있습니다(불러온 범위 안에서)
 
-## OCR
-
-The `글자 읽기` button is optional.
-
-It requires:
-
-- a built C++ OCR runner
-- OCR model files in `cpp/ocr_engine/models`
-
-The app can also import a prepared OCR ZIP through `모델 넣기`.
-
-## Build Notes
-
-Use:
+## 빌드
 
 ```bash
 build_exe.bat
 ```
 
-Run the packaged app from:
+실행: `dist\AutoCropSplitter\AutoCropSplitter.exe` (`build\` 아래 파일은 실행하지 않습니다)
 
-```text
-dist\AutoCropSplitter\AutoCropSplitter.exe
-```
-
-Do not run the temporary executable under `build\`.
-
-## Public Docs
+## 공개 문서
 
 - GitHub Pages: `https://sheryloe.github.io/grid-crop-image/`
 - README: `https://github.com/sheryloe/grid-crop-image/blob/main/README.md`
-- This wiki file: `https://github.com/sheryloe/grid-crop-image/blob/main/WIKI.md`
+- 위키: `https://github.com/sheryloe/grid-crop-image/blob/main/WIKI.md`
