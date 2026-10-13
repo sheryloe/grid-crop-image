@@ -30,8 +30,8 @@ if errorlevel 1 (
 
 echo [3/5] Checking build dependencies...
 set "NEEDS_INSTALL="
-for %%M in (PIL PyInstaller) do (
-    python -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('%%M') else 1)" >nul 2>&1
+for %%M in (Pillow PyInstaller) do (
+    python -m pip show %%M >nul 2>&1
     if errorlevel 1 set "NEEDS_INSTALL=1"
 )
 

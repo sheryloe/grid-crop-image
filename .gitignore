@@ -6,6 +6,17 @@ dist_builds/
 dist_*/
 ._pyi_runtime/
 *.spec
+!AutoCropSplitter.spec
 *_rect_*.png
 google*.html
 naver*.html
+
+# 실행 중 생기는 파일(작업 기록·글자 읽기 설정·작업 폴더)
+.crop_history*.jsonl
+.grid_crop_ocr.json
+.ocr_work/
+.gcs_write_probe
+cpp/ocr_engine/build/
+
+# 시험·작업용 임시 폴더
+.scratch/
